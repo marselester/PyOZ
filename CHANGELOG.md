@@ -5,6 +5,14 @@ All notable changes to PyOZ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.5] - 2026-02-28
+
+### Fixed
+- **Stub generation `@setEvalBranchQuota` exceeded with large modules** - Modules with many functions and classes would fail to compile with `evaluation exceeded 100000 backwards branches` in stub, test, and benchmark generation. Fixed by raising `@setEvalBranchQuota` to `std.math.maxInt(u32)` in all comptime generation call sites: `generateModuleStubs`, `generateImports` in `stubs.zig`, and the stubs/tests/benchmarks section embedding plus qualified name generation in `root.zig`.
+- **CLI linker error on systems with GCC 15+** - `zig build cli` failed with `unhandled relocation type R_X86_64_PC64` on Linux systems with recent GCC/binutils (15+), which emit `.sframe` sections that Zig's linker cannot handle. Fixed by targeting `musl` for the CLI executable on Linux, using Zig's bundled musl instead of the system glibc toolchain. The CLI is now a fully static binary with zero external dependencies.
+- **`__del__` called on failed `__new__` causing segfault** - When a user-defined `__new__` returned an error or `null` (e.g., via `raiseValueError`), PyOZ still called `__del__` during deallocation of the failed object, leading to a segfault on uninitialized data. Now an `_initialized` flag is tracked on each object: it is set only when `__init__`/`__new__` succeeds, and `__del__` is skipped if the flag is unset. This matches Python semantics where `__del__` is never called if `__new__` raises. Works in both ABI3 and non-ABI3 modes.
+- **`__new__` error union errors always raised `RuntimeError`** - When a class `__new__` returning `!T` hit an error, it was always raised as `RuntimeError` regardless of the error name. Now uses the existing `mapWellKnownError()` function so `error.OutOfMemory` raises `MemoryError`, `error.ValueError` raises `ValueError`, `error.IndexOutOfBounds` raises `IndexError`, etc. — matching the behavior already in place for regular functions and methods since v0.11.0.
+
 ## [0.11.4] - 2026-02-19
 
 ### Added

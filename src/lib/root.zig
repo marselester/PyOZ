@@ -905,7 +905,7 @@ pub fn module(comptime config: anytype) type {
 
                 // Build qualified name "module.ClassName" so Python derives __module__
                 const qualified_name: [*:0]const u8 = comptime blk: {
-                    @setEvalBranchQuota(10000);
+                    @setEvalBranchQuota(std.math.maxInt(u32));
                     const mod_name: [*:0]const u8 = config.name;
                     const cls_str: [*:0]const u8 = cls.name;
                     // Count lengths
@@ -1166,7 +1166,7 @@ pub fn module(comptime config: anytype) type {
 
         /// Stubs data for extraction by pyoz CLI (exported as data symbols)
         const __pyoz_stubs_slice__: []const u8 = blk: {
-            @setEvalBranchQuota(100000);
+            @setEvalBranchQuota(std.math.maxInt(u32));
             break :blk stubs_mod.generateModuleStubs(config);
         };
         pub const __pyoz_stubs_ptr__: [*]const u8 = __pyoz_stubs_slice__.ptr;
@@ -1210,7 +1210,7 @@ pub fn module(comptime config: anytype) type {
         /// Test data embedded in a named section (same pattern as stubs).
         /// Format: 8-byte magic "PYOZTEST", 8-byte little-endian length, then content.
         const __pyoz_tests_slice__: []const u8 = blk: {
-            @setEvalBranchQuota(100000);
+            @setEvalBranchQuota(std.math.maxInt(u32));
             break :blk generateTestContent(config);
         };
 
@@ -1238,7 +1238,7 @@ pub fn module(comptime config: anytype) type {
         /// Benchmark data embedded in a named section.
         /// Format: 8-byte magic "PYOZBENC", 8-byte little-endian length, then content.
         const __pyoz_bench_slice__: []const u8 = blk: {
-            @setEvalBranchQuota(100000);
+            @setEvalBranchQuota(std.math.maxInt(u32));
             break :blk generateBenchContent(config);
         };
 

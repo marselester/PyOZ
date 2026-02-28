@@ -33,6 +33,7 @@ pub fn WrapperBuilder(
         pub const PyWrapper = extern struct {
             ob_base: py.PyObject,
             _data_storage: if (is_builtin_subclass) [0]u8 else [DataSize]u8 align(DataAlign),
+            _initialized: u8,
             _extra: [extra_size]u8 align(ExtraAlign),
 
             pub fn getData(self: *@This()) *T {
@@ -43,6 +44,14 @@ pub fn WrapperBuilder(
             pub fn getDataConst(self: *const @This()) *const T {
                 if (is_builtin_subclass) return @ptrCast(self);
                 return @ptrCast(@alignCast(&self._data_storage));
+            }
+
+            pub fn isInitialized(self: *const @This()) bool {
+                return self._initialized != 0;
+            }
+
+            pub fn setInitialized(self: *@This(), val: bool) void {
+                self._initialized = if (val) 1 else 0;
             }
 
             pub fn getDict(self: *@This()) ?*py.PyObject {

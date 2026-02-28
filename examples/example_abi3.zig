@@ -697,6 +697,31 @@ const IntList = struct {
 };
 
 // ============================================================================
+// FailingResource - tests that __del__ is NOT called when __new__ fails
+// ============================================================================
+
+const FailingResource = struct {
+    handle: i64,
+    _freed: bool,
+
+    pub fn __new__(handle: i64) ?FailingResource {
+        if (handle < 0) {
+            return pyoz.raiseValueError("handle must be non-negative");
+        }
+        return .{ .handle = handle, ._freed = false };
+    }
+
+    pub fn __del__(self: *FailingResource) void {
+        self._freed = true;
+        self.handle = -1;
+    }
+
+    pub fn is_valid(self: *const FailingResource) bool {
+        return self.handle >= 0 and !self._freed;
+    }
+};
+
+// ============================================================================
 // LazyIterator example (generator-like)
 // ============================================================================
 
@@ -1842,6 +1867,7 @@ const Abi3Example = pyoz.module(.{
         pyoz.class("Version", Version),
         pyoz.class("Adder", Adder),
         pyoz.class("IntList", IntList),
+        pyoz.class("FailingResource", FailingResource),
         pyoz.class("BitSet", BitSet),
         pyoz.class("PowerNumber", PowerNumber),
         // New classes for ABI3 testing

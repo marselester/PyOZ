@@ -11,6 +11,7 @@ const conversion = @import("../conversion.zig");
 const abi = @import("../abi.zig");
 const ref_mod = @import("../ref.zig");
 
+const errors_mod = @import("../errors.zig");
 const unwrapSignature = @import("../root.zig").unwrapSignature;
 const unwrapSignatureValue = @import("../root.zig").unwrapSignatureValue;
 
@@ -139,6 +140,7 @@ pub fn LifecycleBuilder(
 
                 const self: *PyWrapper = @ptrCast(@alignCast(obj));
                 self.getData().* = std.mem.zeroes(T);
+                self.setInitialized(false);
                 self.initExtra();
                 return obj;
             }
@@ -146,6 +148,7 @@ pub fn LifecycleBuilder(
             const obj = py.PyType_GenericAlloc(t, 0) orelse return null;
             const self: *PyWrapper = @ptrCast(@alignCast(obj));
             self.getData().* = std.mem.zeroes(T);
+            // _initialized is already 0 from GenericAlloc zero-fill
             self.initExtra();
             return obj;
         }
@@ -164,7 +167,10 @@ pub fn LifecycleBuilder(
                         return handleNewReturn(self, T.__new__());
                     }
                 }
-                if (public_field_count == 0) return 0;
+                if (public_field_count == 0) {
+                    self.setInitialized(true);
+                    return 0;
+                }
                 py.PyErr_SetString(py.PyExc_TypeError(), "Wrong number of arguments to __init__");
                 return -1;
             };
@@ -243,6 +249,7 @@ pub fn LifecycleBuilder(
                 }
             }
 
+            self.setInitialized(true);
             return 0;
         }
 
@@ -260,17 +267,19 @@ pub fn LifecycleBuilder(
             if (rt_info == .error_union) {
                 if (result) |value| {
                     self.getData().* = value;
+                    self.setInitialized(true);
                     return 0;
                 } else |err| {
                     if (py.PyErr_Occurred() == null) {
                         const msg = @errorName(err);
-                        py.PyErr_SetString(py.PyExc_RuntimeError(), msg.ptr);
+                        py.PyErr_SetString(errors_mod.mapWellKnownError(msg), msg.ptr);
                     }
                     return -1;
                 }
             } else if (rt_info == .optional) {
                 if (result) |value| {
                     self.getData().* = value;
+                    self.setInitialized(true);
                     return 0;
                 } else {
                     if (py.PyErr_Occurred() == null) {
@@ -280,6 +289,7 @@ pub fn LifecycleBuilder(
                 }
             } else {
                 self.getData().* = result;
+                self.setInitialized(true);
                 return 0;
             }
         }
@@ -327,8 +337,10 @@ pub fn LifecycleBuilder(
             const obj = self_obj orelse return;
             const self: *PyWrapper = @ptrCast(@alignCast(obj));
 
-            // Call user's __del__ if defined (before any cleanup)
-            if (@hasDecl(T, "__del__")) {
+            // Call user's __del__ only if the object was successfully initialized.
+            // If __new__ failed (returned error/null), the object was never fully
+            // constructed, so __del__ must not run — matching Python semantics.
+            if (@hasDecl(T, "__del__") and self.isInitialized()) {
                 T.__del__(self.getData());
             }
 
