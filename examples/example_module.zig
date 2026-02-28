@@ -2764,6 +2764,32 @@ const Resource = struct {
 };
 
 // ============================================================================
+// FailingResource - tests that __del__ is NOT called when __new__ fails
+// This verifies Python semantics: if __new__ raises, no object was created,
+// so __del__ must not run (avoids segfault on uninitialized data).
+const FailingResource = struct {
+    handle: i64,
+    _freed: bool,
+
+    pub fn __new__(handle: i64) ?FailingResource {
+        if (handle < 0) {
+            return pyoz.raiseValueError("handle must be non-negative");
+        }
+        return .{ .handle = handle, ._freed = false };
+    }
+
+    pub fn __del__(self: *FailingResource) void {
+        // Set a global flag so tests can detect if __del__ was called
+        self._freed = true;
+        self.handle = -1;
+    }
+
+    pub fn is_valid(self: *const FailingResource) bool {
+        return self.handle >= 0 and !self._freed;
+    }
+};
+
+// ============================================================================
 // FlexPoint - demonstrates optional constructor arguments
 const FlexPoint = struct {
     x: f64,
@@ -3126,6 +3152,7 @@ const Example = pyoz.module(.{
         pyoz.class("PrivateFieldsExample", PrivateFieldsExample),
         pyoz.class("SimplePoint", SimplePoint),
         pyoz.class("Resource", Resource),
+        pyoz.class("FailingResource", FailingResource),
         pyoz.class("FlexPoint", FlexPoint),
         pyoz.class("Line", Line),
         pyoz.class("Owner", Owner),

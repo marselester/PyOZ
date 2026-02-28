@@ -1677,3 +1677,33 @@ test "abi3 - module has docstring" {
     try std.testing.expect(try python.eval(bool, "example_abi3.__doc__ is not None"));
     try std.testing.expect(try python.eval(bool, "'ABI3' in example_abi3.__doc__"));
 }
+
+// ============================================================================
+// __del__ NOT called when __new__ fails (ABI3)
+// ============================================================================
+
+test "abi3 - FailingResource successful creation calls __del__ on delete" {
+    const python = try initTestPython();
+
+    try python.exec(
+        \\r = example_abi3.FailingResource(42)
+        \\assert r.is_valid()
+        \\del r
+        \\abi3_failing_resource_del_ok = True
+    );
+    try std.testing.expect(try python.eval(bool, "abi3_failing_resource_del_ok"));
+}
+
+test "abi3 - FailingResource failed __new__ does not call __del__" {
+    const python = try initTestPython();
+
+    try python.exec(
+        \\abi3_failed_new_no_crash = False
+        \\try:
+        \\    example_abi3.FailingResource(-1)
+        \\except ValueError as e:
+        \\    assert str(e) == "handle must be non-negative"
+        \\    abi3_failed_new_no_crash = True
+    );
+    try std.testing.expect(try python.eval(bool, "abi3_failed_new_no_crash"));
+}

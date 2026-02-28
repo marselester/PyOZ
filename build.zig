@@ -411,14 +411,32 @@ pub fn build(b: *std.Build) void {
     // CLI Executable (pyoz command)
     // ========================================================================
 
+    // Use musl on Linux to avoid dependency on system glibc toolchain.
+    // Recent GCC versions (15+) emit .sframe sections with R_X86_64_PC64
+    // relocations that Zig's linker cannot handle.
+    const cli_target = if (builtin.os.tag == .linux)
+        b.resolveTargetQuery(.{
+            .cpu_arch = builtin.cpu.arch,
+            .os_tag = .linux,
+            .abi = .musl,
+        })
+    else
+        target;
+
+    const cli_version_mod = b.addModule("version-cli", .{
+        .root_source_file = b.path("src/version.zig"),
+        .target = cli_target,
+        .optimize = optimize,
+    });
+
     const cli_exe = b.addExecutable(.{
         .name = "pyoz",
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/cli/main.zig"),
-            .target = target,
+            .target = cli_target,
             .optimize = optimize,
             .imports = &.{
-                .{ .name = "version", .module = version_mod },
+                .{ .name = "version", .module = cli_version_mod },
             },
         }),
     });

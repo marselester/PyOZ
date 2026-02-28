@@ -3210,6 +3210,39 @@ test "Resource - __del__ runs when refcount drops to zero" {
 }
 
 // ============================================================================
+// __del__ NOT called when __new__ fails
+// ============================================================================
+
+test "FailingResource - successful creation calls __del__ on delete" {
+    const python = try initTestPython();
+
+    try python.exec(
+        \\r = example.FailingResource(42)
+        \\assert r.is_valid()
+        \\del r
+        \\# __del__ should have run without crashing
+        \\failing_resource_del_ok = True
+    );
+    try std.testing.expect(try python.eval(bool, "failing_resource_del_ok"));
+}
+
+test "FailingResource - failed __new__ does not call __del__" {
+    const python = try initTestPython();
+
+    // When __new__ fails (negative handle), __del__ must NOT be called.
+    // Before the fix, this would segfault because __del__ ran on uninitialized data.
+    try python.exec(
+        \\failed_new_no_crash = False
+        \\try:
+        \\    example.FailingResource(-1)
+        \\except ValueError as e:
+        \\    assert str(e) == "handle must be non-negative"
+        \\    failed_new_no_crash = True
+    );
+    try std.testing.expect(try python.eval(bool, "failed_new_no_crash"));
+}
+
+// ============================================================================
 // Optional Constructor Arguments Tests
 // ============================================================================
 
