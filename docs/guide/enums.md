@@ -112,7 +112,31 @@ Circle.PI    # 3.14159
 Circle.UNIT  # "meters"
 ```
 
+## Auto-Scan Alternative
+
+When using the [`.from` auto-scan API](from.md), enums and constants are auto-detected from your namespaces — no explicit `pyoz.enumDef()` or `pyoz.constant()` needed:
+
+```zig
+// types.zig
+pub const Color = enum(i32) { Red = 1, Green = 2, Blue = 3 };
+pub const PI: f64 = 3.14159;
+pub const VERSION: []const u8 = "1.0.0";
+```
+
+```zig
+// root
+const Example = pyoz.module(.{
+    .name = "example",
+    .from = &.{ @import("types.zig") },
+});
+```
+
+PyOZ uses the same IntEnum/StrEnum auto-detection rules. Scalar and string constants are registered automatically.
+
+See [Auto-Scan (.from)](from.md) for the full guide.
+
 ## Next Steps
 
+- [Auto-Scan (.from)](from.md) - Zero-boilerplate module definitions
 - [Functions](functions.md) - Function definitions
 - [Classes](classes.md) - Class definitions

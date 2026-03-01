@@ -12,6 +12,7 @@ Define a Python module.
 const MyModule = pyoz.module(.{
     .name = "mymodule",           // Required: module name
     .doc = "Description",          // Optional: docstring
+    .from = &.{ ... },            // Optional: auto-scan namespaces
     .funcs = &.{ ... },           // Optional: functions
     .classes = &.{ ... },         // Optional: classes
     .enums = &.{ ... },           // Optional: enums
@@ -19,6 +20,70 @@ const MyModule = pyoz.module(.{
     .exceptions = &.{ ... },      // Optional: custom exceptions
     .error_mappings = &.{ ... },  // Optional: error->exception mappings
 });
+```
+
+## Auto-Scan (`.from`)
+
+### `.from` Field
+
+Auto-scan Zig namespaces to register all Python-compatible public declarations.
+
+```zig
+const math = @import("math.zig");
+
+const MyModule = pyoz.module(.{
+    .name = "mymodule",
+    .from = &.{ math },
+});
+```
+
+See [Auto-Scan Guide](../guide/from.md) for full details.
+
+### `pyoz.source(namespace, options)`
+
+Filter which declarations to export from a namespace.
+
+```zig
+pyoz.source(math, .{ .only = &.{ "add", "PI" } })
+pyoz.source(math, .{ .exclude = &.{ "internal_helper" } })
+```
+
+`.only` and `.exclude` are mutually exclusive.
+
+### `pyoz.sub(name, namespace)`
+
+Create a submodule from a namespace.
+
+```zig
+pyoz.sub("strings", string_utils)
+pyoz.sub("io", pyoz.source(io_utils, .{ .exclude = &.{ "debug" } }))
+```
+
+### `pyoz.Exception(base, doc)`
+
+Marker type for defining exceptions inside `.from` namespaces.
+
+```zig
+pub const MyError = pyoz.Exception(.ValueError, "Raised on invalid input");
+```
+
+### `pyoz.ErrorMap(mappings)`
+
+Marker type for defining error-to-exception mappings inside `.from` namespaces.
+
+```zig
+pub const __errors__ = pyoz.ErrorMap(.{
+    .{ "InvalidInput", .ValueError },
+    .{ "TooBig", .ValueError, "Value exceeds limit" },
+});
+```
+
+### Docstring Convention
+
+```zig
+pub fn add(a: i64, b: i64) i64 { return a + b; }
+pub const add__doc__ = "Add two integers";       // docstring for add
+pub const __doc__ = "Module docstring fallback";  // namespace-level docstring
 ```
 
 ## Functions
@@ -33,14 +98,6 @@ pyoz.func("add", add, "Add two numbers")
 
 ### `pyoz.kwfunc(name, fn, doc)`
 
-Define a function with optional parameters.
-
-```zig
-pyoz.kwfunc("greet", greet, "Greet someone")
-```
-
-### `pyoz.kwfunc_named(name, fn, doc)`
-
 Define a function with named keyword arguments using `Args(T)`.
 
 ```zig
@@ -51,7 +108,7 @@ const GreetArgs = struct {
 
 fn greet(args: pyoz.Args(GreetArgs)) []const u8 { ... }
 
-pyoz.kwfunc_named("greet", greet, "Greet someone")
+pyoz.kwfunc("greet", greet, "Greet someone")
 ```
 
 ## Classes

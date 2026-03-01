@@ -5,6 +5,21 @@ All notable changes to PyOZ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0] - 2026-03-01
+
+### Added
+- **`.from` auto-scan API** — New module config field `.from = &.{ @import("my_funcs.zig") }` that auto-discovers and registers public declarations from Zig namespaces. Eliminates repetitive `pyoz.func()`/`pyoz.class()`/`pyoz.constant()` boilerplate when the Python name matches the Zig identifier. Supports functions, classes, enums, constants, and exceptions. Docstrings are provided via `{name}__doc__` convention. Works with `pyoz.source()` for filtering (`.only`/`.exclude`) and `pyoz.sub()` for submodules.
+- **`pyoz.source(namespace, .{ .only = &.{"a", "b"} })` / `.exclude`** — Filter which declarations from a `.from` namespace are exported. Use `.only` to whitelist or `.exclude` to blacklist specific names.
+- **`pyoz.sub("name", namespace)` submodule support** — Declare submodules from `.from` namespaces. Functions, constants, classes, and enums in the submodule namespace are registered under `module.name`.
+- **`pyoz.Exception(base, doc)` and `pyoz.ErrorMap()` markers** — Declare custom exceptions and error-to-exception mappings inside `.from` namespaces.
+- **`.from` auto-detects `pyoz.Args(T)` for keyword arguments** — Functions using `pyoz.Args(T)` in `.from` namespaces are automatically wrapped with named kwargs support, identical to explicit `kwfunc` registration.
+- **`.from` deduplication** — Explicit config entries (`.funcs`, `.classes`, etc.) always take priority over `.from`-scanned declarations with the same name. Duplicate names across multiple `.from` entries produce a compile error with guidance to use `pyoz.source()` filtering.
+- **`.from` stub generation** — `.pyi` stubs are automatically generated for all `.from`-scanned declarations, including functions, classes, enums, and constants.
+
+### Changed
+- **`kwfunc` renamed from `kwfunc_named`** — The old `kwfunc` (which generated unusable `arg0`/`arg1` kwarg names due to Zig's `@typeInfo` not exposing parameter names) is removed. `kwfunc_named` is renamed to `kwfunc` and is now the only way to register keyword argument functions. All kwargs functions must use `pyoz.Args(T)` for real parameter names.
+- **Removed broken `?T` kwargs auto-detection** — Functions with optional `?T` parameters are no longer auto-detected as keyword argument functions (in both `.from` and explicit registration). The `?T` detection generated unusable `arg0`/`arg1` names. Use `pyoz.Args(T)` instead for proper named kwargs support.
+
 ## [0.11.5] - 2026-02-28
 
 ### Fixed

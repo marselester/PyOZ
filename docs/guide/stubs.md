@@ -168,6 +168,12 @@ def parse(self, arg0: str) -> Node: ...
 | Raw `*PyObject` return | `Any` | Use `Signature(*PyObject, "list[Node]")` |
 | Complex generic return | `Any` | Use `Signature(*PyObject, "dict[str, list[int]]")` |
 
+## Stubs for `.from` Entries
+
+When using the [`.from` auto-scan API](from.md), all auto-detected declarations are included in the generated stubs — functions, classes, enums, constants, and exceptions. Docstrings from the `name__doc__` convention are included. Submodules created with `pyoz.sub()` appear as classes with `@staticmethod` methods.
+
+No special configuration is needed — stub generation works the same whether you use explicit registration or `.from`.
+
 ## Limitations
 
 - Generic types may show as `Any` for complex cases
@@ -176,5 +182,6 @@ def parse(self, arg0: str) -> Node: ...
 
 ## Next Steps
 
+- [Auto-Scan (.from)](from.md) - Zero-boilerplate module definitions
 - [Installation](../installation.md) - Build and install your module
 - [Quickstart](../quickstart.md) - Getting started guide

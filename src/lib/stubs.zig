@@ -14,6 +14,7 @@
 
 const std = @import("std");
 const ref_mod = @import("ref.zig");
+const from_mod = @import("from.zig");
 
 /// Check if a field name indicates a private field (starts with underscore)
 /// Private fields are not exposed to Python as properties or __init__ arguments
@@ -1035,7 +1036,8 @@ pub fn generateModuleStubs(comptime config: anytype) []const u8 {
 
         // Check if we have enums - need Enum import
         const has_enums = (@hasField(@TypeOf(config), "enums") and config.enums.len > 0) or
-            (@hasField(@TypeOf(config), "str_enums") and config.str_enums.len > 0);
+            (@hasField(@TypeOf(config), "str_enums") and config.str_enums.len > 0) or
+            (@hasField(@TypeOf(config), "from") and from_mod.countAllFromEnums(config.from, from_mod.buildExplicitNameSet(config)) > 0);
         if (has_enums) {
             // Insert enum import after other imports
             result = result ++ "from enum import Enum\n\n";
@@ -1134,6 +1136,136 @@ pub fn generateModuleStubs(comptime config: anytype) []const u8 {
                 if (f.doc) |d| std.mem.span(d) else null,
                 is_named,
             );
+        }
+
+        // === .from auto-scanned entries ===
+        if (@hasField(@TypeOf(config), "from")) {
+            const explicit_names = from_mod.buildExplicitNameSet(config);
+            const from_entries = config.from;
+
+            for (from_entries) |entry| {
+                if (from_mod.isSub(entry)) continue;
+                const ns = from_mod.resolveNamespace(entry);
+                const opts = from_mod.getSourceOptions(entry);
+                const decls = @typeInfo(ns).@"struct".decls;
+
+                // .from exceptions
+                for (decls) |d| {
+                    if (from_mod.shouldExportAsException(ns, d.name, opts, explicit_names)) {
+                        const ExcMarker = @field(ns, d.name);
+                        const exc_doc_val = ExcMarker._exc_doc;
+                        result = result ++ generateExceptionStub(
+                            d.name,
+                            if (exc_doc_val) |dv| std.mem.span(dv) else null,
+                        );
+                    }
+                }
+
+                // .from enums
+                for (decls) |d| {
+                    if (from_mod.shouldExportAsEnum(ns, d.name, opts, explicit_names)) {
+                        const EnumType = @field(ns, d.name);
+                        const is_str = !from_mod.isIntEnum(EnumType);
+                        result = result ++ generateEnumStub(d.name, EnumType, is_str);
+                    }
+                }
+
+                // .from classes
+                for (decls) |d| {
+                    if (from_mod.shouldExportAsClass(ns, d.name, opts, explicit_names)) {
+                        const ClassType = @field(ns, d.name);
+                        result = result ++ generateClassStub(d.name, ClassType, null);
+                    }
+                }
+
+                // .from constants
+                {
+                    var has_from_consts = false;
+                    for (decls) |d| {
+                        if (from_mod.shouldExportAsConstant(ns, d.name, opts, explicit_names)) {
+                            if (!has_from_consts) {
+                                result = result ++ "# Module constants\n";
+                                has_from_consts = true;
+                            }
+                            const ConstType = @TypeOf(@field(ns, d.name));
+                            result = result ++ generateConstStub(d.name, ConstType);
+                        }
+                    }
+                    if (has_from_consts) {
+                        result = result ++ "\n";
+                    }
+                }
+
+                // .from functions
+                for (decls) |d| {
+                    if (from_mod.shouldExportAsFunction(ns, d.name, opts, explicit_names)) {
+                        const func_val = @field(ns, d.name);
+                        const FnType = @TypeOf(func_val);
+                        const is_named = from_mod.isNamedKwargsFunc(FnType);
+                        const doc_val = from_mod.getDocstring(ns, d.name);
+                        result = result ++ generateFunctionStub(
+                            d.name,
+                            FnType,
+                            if (doc_val) |dv| std.mem.span(dv) else null,
+                            is_named,
+                        );
+                    }
+                }
+            }
+
+            // .from submodules (generate as nested classes with static methods)
+            for (from_entries) |entry| {
+                if (from_mod.isSub(entry)) {
+                    const sub_name = std.mem.span(from_mod.getSubName(entry));
+                    const sub_ns = from_mod.resolveNamespace(entry);
+                    const sub_opts = from_mod.getSourceOptions(entry);
+                    const sub_decls = @typeInfo(sub_ns).@"struct".decls;
+
+                    result = result ++ "class " ++ sub_name ++ ":\n";
+                    var has_members = false;
+
+                    for (sub_decls) |sd| {
+                        if (from_mod.shouldExportAsFunction(sub_ns, sd.name, sub_opts, &.{})) {
+                            const sfunc = @field(sub_ns, sd.name);
+                            const SFnType = @TypeOf(sfunc);
+                            const s_is_named = from_mod.isNamedKwargsFunc(SFnType);
+                            const s_doc = from_mod.getDocstring(sub_ns, sd.name);
+                            // Generate as staticmethod
+                            result = result ++ "    @staticmethod\n";
+                            // Indent the function stub
+                            const fn_stub = generateFunctionStub(
+                                sd.name,
+                                SFnType,
+                                if (s_doc) |sv| std.mem.span(sv) else null,
+                                s_is_named,
+                            );
+                            // Add 4-space indent to each line
+                            var line_start: usize = 0;
+                            for (fn_stub, 0..) |ch, ci| {
+                                if (ch == '\n') {
+                                    result = result ++ "    " ++ fn_stub[line_start .. ci + 1];
+                                    line_start = ci + 1;
+                                }
+                            }
+                            if (line_start < fn_stub.len) {
+                                result = result ++ "    " ++ fn_stub[line_start..];
+                            }
+                            has_members = true;
+                        }
+
+                        if (from_mod.shouldExportAsConstant(sub_ns, sd.name, sub_opts, &.{})) {
+                            const SConstType = @TypeOf(@field(sub_ns, sd.name));
+                            result = result ++ "    " ++ generateConstStub(sd.name, SConstType);
+                            has_members = true;
+                        }
+                    }
+
+                    if (!has_members) {
+                        result = result ++ "    ...\n";
+                    }
+                    result = result ++ "\n";
+                }
+            }
         }
 
         return result;

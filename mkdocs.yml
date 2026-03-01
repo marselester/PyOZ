@@ -76,6 +76,7 @@ nav:
           - Installation: installation.md
           - Quickstart: quickstart.md
     - Guide:
+          - Auto-Scan (.from): guide/from.md
           - Functions: guide/functions.md
           - Classes: guide/classes.md
           - Properties: guide/properties.md

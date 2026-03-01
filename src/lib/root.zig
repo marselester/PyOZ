@@ -392,7 +392,6 @@ pub const strEnumDef = enums_mod.strEnumDef;
 const wrappers_mod = @import("wrappers.zig");
 pub const wrapFunction = wrappers_mod.wrapFunction;
 pub const wrapFunctionWithClasses = wrappers_mod.wrapFunctionWithClasses;
-pub const wrapFunctionWithKeywords = wrappers_mod.wrapFunctionWithKeywords;
 pub const wrapFunctionWithNamedKeywords = wrappers_mod.wrapFunctionWithNamedKeywords;
 pub const wrapFunctionWithErrorMapping = wrappers_mod.wrapFunctionWithErrorMapping;
 pub const PyCFunctionWithKeywords = wrappers_mod.PyCFunctionWithKeywords;
@@ -401,8 +400,16 @@ pub const func = wrappers_mod.func;
 pub const KwFuncDefEntry = wrappers_mod.KwFuncDefEntry;
 pub const kwfunc = wrappers_mod.kwfunc;
 pub const Args = wrappers_mod.Args;
-pub const NamedKwFuncDefEntry = wrappers_mod.NamedKwFuncDefEntry;
-pub const kwfunc_named = wrappers_mod.kwfunc_named;
+
+// =============================================================================
+// `.from` auto-scan API
+// =============================================================================
+
+const from_mod = @import("from.zig");
+pub const source = from_mod.source;
+pub const sub = from_mod.sub;
+pub const Exception = from_mod.Exception;
+pub const ErrorMap = from_mod.ErrorMapType;
 
 // =============================================================================
 // Class definitions
@@ -707,10 +714,26 @@ fn indentLines(comptime body: []const u8, comptime spaces: usize) []const u8 {
 }
 
 /// Generate a complete Python unittest file from inline test definitions.
+/// Merges explicit .tests with __tests__ from .from namespaces.
 fn generateTestContent(comptime config: anytype) []const u8 {
     comptime {
         const tests_list = if (@hasField(@TypeOf(config), "tests")) config.tests else &[_]TestDef{};
-        if (tests_list.len == 0) return "";
+
+        // Count .from tests
+        const has_from = @hasField(@TypeOf(config), "from");
+        const from_entries = if (has_from) config.from else &.{};
+        var from_test_count: usize = 0;
+        if (has_from) {
+            for (from_entries) |entry| {
+                if (from_mod.isSub(entry)) continue;
+                const ns = from_mod.resolveNamespace(entry);
+                if (from_mod.hasTests(ns)) {
+                    from_test_count += @field(ns, "__tests__").len;
+                }
+            }
+        }
+
+        if (tests_list.len == 0 and from_test_count == 0) return "";
 
         const mod_name: []const u8 = blk: {
             var len: usize = 0;
@@ -733,6 +756,7 @@ fn generateTestContent(comptime config: anytype) []const u8 {
             "\n" ++
             "class Test" ++ capitalizeFirst(mod_name) ++ "(unittest.TestCase):\n";
 
+        // Explicit tests
         for (tests_list) |t| {
             const method_name = "test_" ++ slugify(t.name);
             result = result ++ "    def " ++ method_name ++ "(self):\n";
@@ -748,6 +772,28 @@ fn generateTestContent(comptime config: anytype) []const u8 {
             result = result ++ "\n";
         }
 
+        // .from tests
+        if (has_from) {
+            for (from_entries) |entry| {
+                if (from_mod.isSub(entry)) continue;
+                const ns = from_mod.resolveNamespace(entry);
+                if (from_mod.hasTests(ns)) {
+                    for (@field(ns, "__tests__")) |t| {
+                        const method_name = "test_" ++ slugify(t.name);
+                        result = result ++ "    def " ++ method_name ++ "(self):\n";
+
+                        if (t.exception) |exc| {
+                            result = result ++ "        with self.assertRaises(" ++ exc ++ "):\n";
+                            result = result ++ indentLines(t.body, 12);
+                        } else {
+                            result = result ++ indentLines(t.body, 8);
+                        }
+                        result = result ++ "\n";
+                    }
+                }
+            }
+        }
+
         result = result ++
             "\n" ++
             "if __name__ == \"__main__\":\n" ++
@@ -758,10 +804,26 @@ fn generateTestContent(comptime config: anytype) []const u8 {
 }
 
 /// Generate a complete Python benchmark script from inline benchmark definitions.
+/// Merges explicit .benchmarks with __benchmarks__ from .from namespaces.
 fn generateBenchContent(comptime config: anytype) []const u8 {
     comptime {
         const bench_list = if (@hasField(@TypeOf(config), "benchmarks")) config.benchmarks else &[_]BenchDef{};
-        if (bench_list.len == 0) return "";
+
+        // Count .from benchmarks
+        const has_from = @hasField(@TypeOf(config), "from");
+        const from_entries = if (has_from) config.from else &.{};
+        var from_bench_count: usize = 0;
+        if (has_from) {
+            for (from_entries) |entry| {
+                if (from_mod.isSub(entry)) continue;
+                const ns = from_mod.resolveNamespace(entry);
+                if (from_mod.hasBenchmarks(ns)) {
+                    from_bench_count += @field(ns, "__benchmarks__").len;
+                }
+            }
+        }
+
+        if (bench_list.len == 0 and from_bench_count == 0) return "";
 
         const mod_name: []const u8 = blk: {
             var len: usize = 0;
@@ -783,12 +845,30 @@ fn generateBenchContent(comptime config: anytype) []const u8 {
             "def run_benchmarks():\n" ++
             "    results = []\n";
 
+        // Explicit benchmarks
         for (bench_list) |b| {
             const fn_name = "bench_" ++ slugify(b.name);
             result = result ++ "    def " ++ fn_name ++ "():\n";
             result = result ++ indentLines(b.body, 8);
             result = result ++ "    t = timeit.timeit(" ++ fn_name ++ ", number=100000)\n";
             result = result ++ "    results.append((\"" ++ b.name ++ "\", t))\n\n";
+        }
+
+        // .from benchmarks
+        if (has_from) {
+            for (from_entries) |entry| {
+                if (from_mod.isSub(entry)) continue;
+                const ns = from_mod.resolveNamespace(entry);
+                if (from_mod.hasBenchmarks(ns)) {
+                    for (@field(ns, "__benchmarks__")) |b| {
+                        const fn_name = "bench_" ++ slugify(b.name);
+                        result = result ++ "    def " ++ fn_name ++ "():\n";
+                        result = result ++ indentLines(b.body, 8);
+                        result = result ++ "    t = timeit.timeit(" ++ fn_name ++ ", number=100000)\n";
+                        result = result ++ "    results.append((\"" ++ b.name ++ "\", t))\n\n";
+                    }
+                }
+            }
         }
 
         result = result ++
@@ -808,11 +888,138 @@ fn generateBenchContent(comptime config: anytype) []const u8 {
     }
 }
 
+/// Extract class info from both explicit classes AND .from namespace classes.
+fn extractClassInfoWithFrom(
+    comptime classes: anytype,
+    comptime from_entries: anytype,
+    comptime explicit_names_list: []const []const u8,
+) []const class_mod.ClassInfo {
+    comptime {
+        @setEvalBranchQuota(std.math.maxInt(u32));
+
+        // Count .from classes
+        const from_count = from_mod.countAllFromClasses(from_entries, explicit_names_list);
+        const total = classes.len + from_count;
+
+        var infos: [total]class_mod.ClassInfo = undefined;
+
+        // Explicit classes (same as extractClassInfo)
+        for (classes, 0..) |cls, i| {
+            const parent_type: ?type = blk: {
+                if (!@hasDecl(cls.zig_type, "__base__")) break :blk null;
+                const BaseDecl = @TypeOf(cls.zig_type.__base__);
+                if (BaseDecl != type) break :blk null;
+                const BaseType = cls.zig_type.__base__;
+                if (!@hasDecl(BaseType, "_is_pyoz_base")) break :blk null;
+                break :blk BaseType.ParentType;
+            };
+            if (parent_type) |pt| {
+                var found = false;
+                for (infos[0..i]) |prev| {
+                    if (prev.zig_type == pt) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    @compileError("PyOZ class inheritance: parent class must be listed before child class in the classes array");
+                }
+            }
+            infos[i] = .{ .name = cls.name, .zig_type = cls.zig_type, .parent_zig_type = parent_type };
+        }
+
+        // .from classes
+        var from_idx: usize = classes.len;
+        for (from_entries) |entry| {
+            if (from_mod.isSub(entry)) continue;
+            const ns = from_mod.resolveNamespace(entry);
+            const opts = from_mod.getSourceOptions(entry);
+            const decls = @typeInfo(ns).@"struct".decls;
+            for (decls) |d| {
+                if (from_mod.shouldExportAsClass(ns, d.name, opts, explicit_names_list)) {
+                    const ClassType = @field(ns, d.name);
+                    const parent_type: ?type = pblk: {
+                        if (!@hasDecl(ClassType, "__base__")) break :pblk null;
+                        const BaseDecl2 = @TypeOf(ClassType.__base__);
+                        if (BaseDecl2 != type) break :pblk null;
+                        const BaseType2 = ClassType.__base__;
+                        if (!@hasDecl(BaseType2, "_is_pyoz_base")) break :pblk null;
+                        break :pblk BaseType2.ParentType;
+                    };
+                    infos[from_idx] = .{
+                        .name = from_mod.comptimeStrZ(d.name),
+                        .zig_type = ClassType,
+                        .parent_zig_type = parent_type,
+                    };
+                    from_idx += 1;
+                }
+            }
+        }
+
+        const final = infos;
+        return &final;
+    }
+}
+
+// Check if any .from function uses Decimal types
+fn anyFromFuncUsesDecimal(comptime from_entries: anytype, comptime explicit_names_list: []const []const u8) bool {
+    @setEvalBranchQuota(std.math.maxInt(u32));
+    for (from_entries) |entry| {
+        if (from_mod.isSub(entry)) continue;
+        const ns = from_mod.resolveNamespace(entry);
+        const opts = from_mod.getSourceOptions(entry);
+        const decls = @typeInfo(ns).@"struct".decls;
+        for (decls) |d| {
+            if (from_mod.shouldExportAsFunction(ns, d.name, opts, explicit_names_list)) {
+                const func_val = @field(ns, d.name);
+                const Fn = @TypeOf(func_val);
+                const fn_info = @typeInfo(Fn).@"fn";
+                if (fn_info.return_type) |ret| {
+                    if (usesDecimalType(ret)) return true;
+                }
+                for (fn_info.params) |param| {
+                    if (param.type) |ptype| {
+                        if (usesDecimalType(ptype)) return true;
+                    }
+                }
+            }
+        }
+    }
+    return false;
+}
+
+// Check if any .from function uses DateTime types
+fn anyFromFuncUsesDateTime(comptime from_entries: anytype, comptime explicit_names_list: []const []const u8) bool {
+    @setEvalBranchQuota(std.math.maxInt(u32));
+    for (from_entries) |entry| {
+        if (from_mod.isSub(entry)) continue;
+        const ns = from_mod.resolveNamespace(entry);
+        const opts = from_mod.getSourceOptions(entry);
+        const decls = @typeInfo(ns).@"struct".decls;
+        for (decls) |d| {
+            if (from_mod.shouldExportAsFunction(ns, d.name, opts, explicit_names_list)) {
+                const func_val = @field(ns, d.name);
+                const Fn = @TypeOf(func_val);
+                const fn_info = @typeInfo(Fn).@"fn";
+                if (fn_info.return_type) |ret| {
+                    if (usesDateTimeType(ret)) return true;
+                }
+                for (fn_info.params) |param| {
+                    if (param.type) |ptype| {
+                        if (usesDateTimeType(ptype)) return true;
+                    }
+                }
+            }
+        }
+    }
+    return false;
+}
+
 /// Create a Python module from configuration
 pub fn module(comptime config: anytype) type {
+    @setEvalBranchQuota(std.math.maxInt(u32));
     const classes = config.classes;
     const funcs = config.funcs;
-    const class_infos = extractClassInfo(classes);
     const exceptions = if (@hasField(@TypeOf(config), "exceptions")) config.exceptions else &[_]ExceptionDef{};
     const num_exceptions = exceptions.len;
     const error_mappings = if (@hasField(@TypeOf(config), "error_mappings")) config.error_mappings else &[_]ErrorMapping{};
@@ -827,19 +1034,79 @@ pub fn module(comptime config: anytype) type {
     _ = if (@hasField(@TypeOf(config), "tests")) config.tests else &[_]TestDef{};
     _ = if (@hasField(@TypeOf(config), "benchmarks")) config.benchmarks else &[_]BenchDef{};
 
+    // === .from auto-scan processing ===
+    const has_from = @hasField(@TypeOf(config), "from");
+    const from_entries = if (has_from) config.from else &.{};
+
+    // Validate no duplicates across .from entries
+    if (has_from) {
+        from_mod.checkFromDuplicates(from_entries);
+    }
+
+    // Build explicit name set for deduplication (explicit wins over .from)
+    const explicit_names = from_mod.buildExplicitNameSet(config);
+
+    // Count .from items for array sizing
+    const from_func_count = if (has_from) from_mod.countAllFromFunctions(from_entries, explicit_names) else 0;
+    const from_exc_count = if (has_from) from_mod.countAllFromExceptions(from_entries, explicit_names) else 0;
+
+    // Build combined class_infos (explicit + .from classes)
+    const class_infos = extractClassInfoWithFrom(classes, from_entries, explicit_names);
+
+    // Total exception count (explicit + .from)
+    const num_all_exceptions = num_exceptions + from_exc_count;
+
     // Detect at comptime if this module uses Decimal or DateTime types
-    const needs_decimal_init = anyFuncUsesDecimal(funcs);
-    const needs_datetime_init = anyFuncUsesDateTime(funcs);
+    const needs_decimal_init = anyFuncUsesDecimal(funcs) or
+        (has_from and anyFromFuncUsesDecimal(from_entries, explicit_names));
+    const needs_datetime_init = anyFuncUsesDateTime(funcs) or
+        (has_from and anyFromFuncUsesDateTime(from_entries, explicit_names));
+
+    // Total error mappings (explicit + .from)
+    const all_error_mappings = comptime blk: {
+        const total = error_mappings.len + from_mod.countAllFromErrorMappings(from_entries);
+        if (total == 0) break :blk &[_]ErrorMapping{};
+        var mappings: [total]ErrorMapping = undefined;
+        // Copy explicit mappings
+        for (error_mappings, 0..) |m, i| {
+            mappings[i] = m;
+        }
+        // Append .from error mappings
+        var idx: usize = error_mappings.len;
+        for (from_entries) |entry| {
+            if (from_mod.isSub(entry)) continue;
+            const ns = from_mod.resolveNamespace(entry);
+            const decls = @typeInfo(ns).@"struct".decls;
+            for (decls) |d| {
+                if (from_mod.isErrorMapDecl(ns, d.name)) {
+                    const ErrMap = @field(ns, d.name);
+                    const err_mappings_data = ErrMap._error_mappings;
+                    for (err_mappings_data) |em| {
+                        mappings[idx] = .{
+                            .error_name = em[0],
+                            .exc_type = em[1],
+                            .message = if (em.len > 2) em[2] else null,
+                        };
+                        idx += 1;
+                    }
+                }
+            }
+        }
+        const final = mappings;
+        break :blk &final;
+    };
 
     return struct {
         // Generate method definitions array with class-aware wrappers
-        var methods: [funcs.len + 1]PyMethodDef = blk: {
-            var m: [funcs.len + 1]PyMethodDef = undefined;
+        // Size = explicit funcs + .from funcs + sentinel
+        var methods: [funcs.len + from_func_count + 1]PyMethodDef = blk: {
+            @setEvalBranchQuota(std.math.maxInt(u32));
+            var m: [funcs.len + from_func_count + 1]PyMethodDef = undefined;
+
+            // Explicit funcs
             for (funcs, 0..) |f, i| {
-                // Check if this is a named keyword-argument function
+                // Check if this is a keyword-argument function using Args(T)
                 const is_named_kwargs = @hasField(@TypeOf(f), "is_named_kwargs") and f.is_named_kwargs;
-                // Check if this is a positional keyword-argument function
-                const is_kwargs = @hasField(@TypeOf(f), "is_kwargs") and f.is_kwargs;
 
                 if (is_named_kwargs) {
                     m[i] = .{
@@ -848,19 +1115,12 @@ pub fn module(comptime config: anytype) type {
                         .ml_flags = py.METH_VARARGS | py.METH_KEYWORDS,
                         .ml_doc = f.doc,
                     };
-                } else if (is_kwargs) {
-                    m[i] = .{
-                        .ml_name = f.name,
-                        .ml_meth = @ptrCast(wrapFunctionWithKeywords(f.func, class_infos)),
-                        .ml_flags = py.METH_VARARGS | py.METH_KEYWORDS,
-                        .ml_doc = f.doc,
-                    };
                 } else {
                     // Use error mapping wrapper if mappings are defined
-                    if (error_mappings.len > 0) {
+                    if (all_error_mappings.len > 0) {
                         m[i] = .{
                             .ml_name = f.name,
-                            .ml_meth = wrapFunctionWithErrorMapping(f.func, class_infos, error_mappings),
+                            .ml_meth = wrapFunctionWithErrorMapping(f.func, class_infos, all_error_mappings),
                             .ml_flags = py.METH_VARARGS,
                             .ml_doc = f.doc,
                         };
@@ -874,7 +1134,51 @@ pub fn module(comptime config: anytype) type {
                     }
                 }
             }
-            m[funcs.len] = .{
+
+            // .from funcs
+            var from_idx: usize = funcs.len;
+            for (from_entries) |entry| {
+                if (from_mod.isSub(entry)) continue;
+                const ns = from_mod.resolveNamespace(entry);
+                const opts = from_mod.getSourceOptions(entry);
+                const decls = @typeInfo(ns).@"struct".decls;
+                for (decls) |d| {
+                    if (from_mod.shouldExportAsFunction(ns, d.name, opts, explicit_names)) {
+                        const func_val = @field(ns, d.name);
+                        const doc = from_mod.getDocstring(ns, d.name);
+                        const FnType = @TypeOf(func_val);
+
+                        if (from_mod.isNamedKwargsFunc(FnType)) {
+                            m[from_idx] = .{
+                                .ml_name = from_mod.comptimeStrZ(d.name),
+                                .ml_meth = @ptrCast(wrapFunctionWithNamedKeywords(func_val, class_infos)),
+                                .ml_flags = py.METH_VARARGS | py.METH_KEYWORDS,
+                                .ml_doc = doc,
+                            };
+                        } else {
+                            if (all_error_mappings.len > 0) {
+                                m[from_idx] = .{
+                                    .ml_name = from_mod.comptimeStrZ(d.name),
+                                    .ml_meth = wrapFunctionWithErrorMapping(func_val, class_infos, all_error_mappings),
+                                    .ml_flags = py.METH_VARARGS,
+                                    .ml_doc = doc,
+                                };
+                            } else {
+                                m[from_idx] = .{
+                                    .ml_name = from_mod.comptimeStrZ(d.name),
+                                    .ml_meth = wrapFunctionWithClasses(func_val, class_infos),
+                                    .ml_flags = py.METH_VARARGS,
+                                    .ml_doc = doc,
+                                };
+                            }
+                        }
+                        from_idx += 1;
+                    }
+                }
+            }
+
+            // Sentinel (null terminator)
+            m[funcs.len + from_func_count] = .{
                 .ml_name = null,
                 .ml_meth = null,
                 .ml_flags = 0,
@@ -889,6 +1193,7 @@ pub fn module(comptime config: anytype) type {
 
         // Py_mod_exec slot function — called by Python to populate the module (PEP 489 phase 2)
         fn moduleExec(mod_obj: ?*PyObject) callconv(.c) c_int {
+            @setEvalBranchQuota(std.math.maxInt(u32));
             const mod: *PyObject = mod_obj orelse return -1;
 
             // Initialize special type APIs at module load time (detected at comptime)
@@ -1054,6 +1359,267 @@ pub fn module(comptime config: anytype) type {
                 }
             }
 
+            // === .from: Register classes ===
+            if (has_from) {
+                inline for (from_entries) |entry| {
+                    if (comptime !from_mod.isSub(entry)) {
+                        const ns = from_mod.resolveNamespace(entry);
+                        const opts = comptime from_mod.getSourceOptions(entry);
+                        const decls = @typeInfo(ns).@"struct".decls;
+                        inline for (decls) |d| {
+                            if (comptime from_mod.shouldExportAsClass(ns, d.name, opts, explicit_names)) {
+                                const ClassType = @field(ns, d.name);
+                                const cls_name_z = comptime from_mod.comptimeStrZ(d.name);
+                                const FromWrapper = class_mod.getWrapperWithName(cls_name_z, ClassType, class_infos);
+
+                                const from_qualified: [*:0]const u8 = comptime qblk: {
+                                    @setEvalBranchQuota(std.math.maxInt(u32));
+                                    const mn: [*:0]const u8 = config.name;
+                                    var ml: usize = 0;
+                                    while (mn[ml] != 0) ml += 1;
+                                    const cn = d.name;
+                                    const tot = ml + 1 + cn.len;
+                                    var qbuf: [tot:0]u8 = undefined;
+                                    for (0..ml) |qi| qbuf[qi] = mn[qi];
+                                    qbuf[ml] = '.';
+                                    for (0..cn.len) |qi| qbuf[ml + 1 + qi] = cn[qi];
+                                    qbuf[tot] = 0;
+                                    const qfin = qbuf;
+                                    break :qblk @ptrCast(&qfin);
+                                };
+
+                                const from_type_obj = FromWrapper.initTypeWithName(from_qualified) orelse {
+                                    return -1;
+                                };
+
+                                if (!abi.abi3_enabled) {
+                                    const from_slots_tuple = class_mod.createSlotsTuple(ClassType);
+                                    if (from_slots_tuple) |fst| {
+                                        if (from_type_obj.tp_dict) |fdict| {
+                                            _ = py.PyDict_SetItemString(fdict, "__slots__", fst);
+                                        }
+                                        py.Py_DecRef(fst);
+                                    }
+                                    if (from_type_obj.tp_dict) |ftype_dict| {
+                                        if (!class_mod.addClassAttributes(ClassType, ftype_dict)) {
+                                            return -1;
+                                        }
+                                    }
+                                } else {
+                                    const ftype_as_obj: *py.PyObject = @ptrCast(@alignCast(from_type_obj));
+                                    if (!class_mod.addClassAttributesAbi3(ClassType, ftype_as_obj)) {
+                                        return -1;
+                                    }
+                                }
+
+                                if (comptime abi.abi3_enabled) {
+                                    const ftype_as_obj: *py.PyObject = @ptrCast(@alignCast(from_type_obj));
+                                    py.Py_IncRef(ftype_as_obj);
+                                    if (py.c.PyModule_AddObject(mod, cls_name_z, ftype_as_obj) < 0) {
+                                        py.Py_DecRef(ftype_as_obj);
+                                        return -1;
+                                    }
+                                } else {
+                                    if (py.PyModule_AddType(mod, from_type_obj) < 0) {
+                                        return -1;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // === .from: Register exceptions ===
+            if (has_from) {
+                comptime var from_exc_idx: usize = num_exceptions;
+                inline for (from_entries) |entry| {
+                    if (comptime !from_mod.isSub(entry)) {
+                        const ns = from_mod.resolveNamespace(entry);
+                        const opts = comptime from_mod.getSourceOptions(entry);
+                        const decls = @typeInfo(ns).@"struct".decls;
+                        inline for (decls) |d| {
+                            if (comptime from_mod.shouldExportAsException(ns, d.name, opts, explicit_names)) {
+                                const ExcMarker = @field(ns, d.name);
+                                const base_exc_from = ExcMarker._exc_base.toPyObject();
+                                const exc_type_from = py.PyErr_NewException(
+                                    &exception_full_names[from_exc_idx],
+                                    base_exc_from,
+                                    null,
+                                ) orelse {
+                                    return -1;
+                                };
+                                exception_types[from_exc_idx] = exc_type_from;
+
+                                if (ExcMarker._exc_doc) |exc_doc| {
+                                    const exc_doc_str = py.PyUnicode_FromString(exc_doc);
+                                    if (exc_doc_str) |eds| {
+                                        _ = py.PyObject_SetAttrString(exc_type_from, "__doc__", eds);
+                                        py.Py_DecRef(eds);
+                                    }
+                                }
+
+                                if (py.PyModule_AddObject(mod, from_mod.comptimeStrZ(d.name), exc_type_from) < 0) {
+                                    py.Py_DecRef(exc_type_from);
+                                    return -1;
+                                }
+
+                                from_exc_idx += 1;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // === .from: Register enums ===
+            if (has_from) {
+                inline for (from_entries) |entry| {
+                    if (comptime !from_mod.isSub(entry)) {
+                        const ns = from_mod.resolveNamespace(entry);
+                        const opts = comptime from_mod.getSourceOptions(entry);
+                        const decls = @typeInfo(ns).@"struct".decls;
+                        inline for (decls) |d| {
+                            if (comptime from_mod.shouldExportAsEnum(ns, d.name, opts, explicit_names)) {
+                                const EnumType = @field(ns, d.name);
+                                const is_str = comptime !from_mod.isIntEnum(EnumType);
+                                const enum_name_z = comptime from_mod.comptimeStrZ(d.name);
+                                const from_enum_obj = (if (comptime is_str)
+                                    module_mod.createStrEnum(EnumType, enum_name_z)
+                                else
+                                    module_mod.createEnum(EnumType, enum_name_z)) orelse {
+                                    return -1;
+                                };
+
+                                if (py.PyModule_AddObject(mod, enum_name_z, from_enum_obj) < 0) {
+                                    py.Py_DecRef(from_enum_obj);
+                                    return -1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // === .from: Register constants ===
+            if (has_from) {
+                inline for (from_entries) |entry| {
+                    if (comptime !from_mod.isSub(entry)) {
+                        const ns = from_mod.resolveNamespace(entry);
+                        const opts = comptime from_mod.getSourceOptions(entry);
+                        const decls = @typeInfo(ns).@"struct".decls;
+                        inline for (decls) |d| {
+                            if (comptime from_mod.shouldExportAsConstant(ns, d.name, opts, explicit_names)) {
+                                const const_val = @field(ns, d.name);
+                                const ConstType = @TypeOf(const_val);
+                                const const_name_z = from_mod.comptimeStrZ(d.name);
+                                const from_py_value = Conversions.toPy(ConstType, const_val) orelse {
+                                    return -1;
+                                };
+
+                                if (py.PyModule_AddObject(mod, const_name_z, from_py_value) < 0) {
+                                    py.Py_DecRef(from_py_value);
+                                    return -1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // === .from: Register submodules ===
+            if (has_from) {
+                inline for (from_entries) |entry| {
+                    if (comptime from_mod.isSub(entry)) {
+                        const sub_name = comptime from_mod.getSubName(entry);
+                        const sub_ns = from_mod.resolveNamespace(entry);
+                        const sub_opts = comptime from_mod.getSourceOptions(entry);
+
+                        // Create the submodule
+                        const sub_mod = py.c.PyModule_New(sub_name) orelse {
+                            return -1;
+                        };
+
+                        // Set submodule docstring from __doc__ if present
+                        const sub_doc_str = comptime from_mod.getNamespaceDoc(sub_ns);
+                        if (sub_doc_str) |sdoc| {
+                            const doc_py = py.c.PyUnicode_FromString(sdoc);
+                            if (doc_py) |ds| {
+                                _ = py.c.PyObject_SetAttrString(sub_mod, "__doc__", ds);
+                                py.Py_DecRef(ds);
+                            }
+                        }
+
+                        // Register submodule functions directly
+                        const sub_decls = @typeInfo(sub_ns).@"struct".decls;
+                        inline for (sub_decls) |sd| {
+                            if (comptime from_mod.shouldExportAsFunction(sub_ns, sd.name, sub_opts, &.{})) {
+                                const sub_func_val = @field(sub_ns, sd.name);
+                                const sub_doc = from_mod.getDocstring(sub_ns, sd.name);
+                                const SubFnType = @TypeOf(sub_func_val);
+                                const sub_func_name = from_mod.comptimeStrZ(sd.name);
+
+                                // Create a PyCFunction and add via PyModule_AddObject
+                                const sub_meth_def = comptime blk_m: {
+                                    if (from_mod.isNamedKwargsFunc(SubFnType)) {
+                                        break :blk_m py.c.PyMethodDef{
+                                            .ml_name = sub_func_name,
+                                            .ml_meth = @ptrCast(wrapFunctionWithNamedKeywords(sub_func_val, class_infos)),
+                                            .ml_flags = py.METH_VARARGS | py.METH_KEYWORDS,
+                                            .ml_doc = sub_doc,
+                                        };
+                                    } else {
+                                        break :blk_m py.c.PyMethodDef{
+                                            .ml_name = sub_func_name,
+                                            .ml_meth = if (all_error_mappings.len > 0) wrapFunctionWithErrorMapping(sub_func_val, class_infos, all_error_mappings) else wrapFunctionWithClasses(sub_func_val, class_infos),
+                                            .ml_flags = py.METH_VARARGS,
+                                            .ml_doc = sub_doc,
+                                        };
+                                    }
+                                };
+
+                                const sub_cfunc = py.c.PyCFunction_NewEx(
+                                    @constCast(&sub_meth_def),
+                                    null,
+                                    null,
+                                ) orelse {
+                                    py.Py_DecRef(sub_mod);
+                                    return -1;
+                                };
+
+                                if (py.c.PyModule_AddObject(sub_mod, sub_func_name, sub_cfunc) < 0) {
+                                    py.Py_DecRef(sub_cfunc);
+                                    py.Py_DecRef(sub_mod);
+                                    return -1;
+                                }
+                            }
+
+                            // Register submodule constants
+                            if (comptime from_mod.shouldExportAsConstant(sub_ns, sd.name, sub_opts, &.{})) {
+                                const sub_const_val = @field(sub_ns, sd.name);
+                                const SubConstType = @TypeOf(sub_const_val);
+                                const sub_const_name_z = from_mod.comptimeStrZ(sd.name);
+                                const sub_py_value = Conversions.toPy(SubConstType, sub_const_val) orelse {
+                                    py.Py_DecRef(sub_mod);
+                                    return -1;
+                                };
+
+                                if (py.c.PyModule_AddObject(sub_mod, sub_const_name_z, sub_py_value) < 0) {
+                                    py.Py_DecRef(sub_py_value);
+                                    py.Py_DecRef(sub_mod);
+                                    return -1;
+                                }
+                            }
+                        }
+
+                        // Add submodule to parent module
+                        if (py.c.PyModule_AddObject(mod, sub_name, sub_mod) < 0) {
+                            py.Py_DecRef(sub_mod);
+                            return -1;
+                        }
+                    }
+                }
+            }
+
             // Call user-provided post-init callback if present
             if (module_init_fn) |user_init| {
                 if (user_init(mod) < 0) return -1;
@@ -1068,10 +1634,24 @@ pub fn module(comptime config: anytype) type {
             .{ .slot = 0, .value = null },
         };
 
+        // Module docstring: use explicit .doc if set, otherwise try __doc__ from .from namespaces
+        const m_doc: ?[*:0]const u8 = if (@hasField(@TypeOf(config), "doc"))
+            config.doc
+        else if (has_from) blk_doc: {
+            for (from_entries) |entry| {
+                if (from_mod.isSub(entry)) continue;
+                const ns = from_mod.resolveNamespace(entry);
+                if (from_mod.getNamespaceDoc(ns)) |doc| {
+                    break :blk_doc doc;
+                }
+            }
+            break :blk_doc null;
+        } else null;
+
         var module_def: PyModuleDef = .{
             .m_base = py.PyModuleDef_HEAD_INIT,
             .m_name = config.name,
-            .m_doc = config.doc,
+            .m_doc = m_doc,
             .m_size = 0,
             .m_methods = &methods,
             .m_slots = @ptrCast(&module_slots),
@@ -1081,32 +1661,80 @@ pub fn module(comptime config: anytype) type {
         };
 
         // Generate full exception names at comptime (e.g., "mymodule.MyError")
-        const exception_full_names: [num_exceptions][256:0]u8 = blk: {
-            var names: [num_exceptions][256:0]u8 = undefined;
+        // Includes both explicit exceptions and .from exceptions
+        const exception_full_names: [num_all_exceptions][256:0]u8 = blk: {
+            @setEvalBranchQuota(std.math.maxInt(u32));
+            var names: [num_all_exceptions][256:0]u8 = undefined;
+            // Get module name length
+            var mod_len: usize = 0;
+            while (config.name[mod_len] != 0) : (mod_len += 1) {}
+
+            // Explicit exceptions
             for (exceptions, 0..) |exc, i| {
                 var buf: [256:0]u8 = [_:0]u8{0} ** 256;
-                // Get module name length by finding null terminator
-                var mod_len: usize = 0;
-                while (config.name[mod_len] != 0) : (mod_len += 1) {}
-                // Get exception name length
                 var exc_len: usize = 0;
                 while (exc.name[exc_len] != 0) : (exc_len += 1) {}
-                // Copy module name
                 for (0..mod_len) |j| {
                     buf[j] = config.name[j];
                 }
                 buf[mod_len] = '.';
-                // Copy exception name
                 for (0..exc_len) |j| {
                     buf[mod_len + 1 + j] = exc.name[j];
                 }
                 names[i] = buf;
             }
+
+            // .from exceptions
+            var from_exc_name_idx: usize = num_exceptions;
+            for (from_entries) |entry| {
+                if (from_mod.isSub(entry)) continue;
+                const ns = from_mod.resolveNamespace(entry);
+                const opts = from_mod.getSourceOptions(entry);
+                const decls = @typeInfo(ns).@"struct".decls;
+                for (decls) |d| {
+                    if (from_mod.shouldExportAsException(ns, d.name, opts, explicit_names)) {
+                        var buf2: [256:0]u8 = [_:0]u8{0} ** 256;
+                        for (0..mod_len) |j| {
+                            buf2[j] = config.name[j];
+                        }
+                        buf2[mod_len] = '.';
+                        for (0..d.name.len) |j| {
+                            buf2[mod_len + 1 + j] = d.name[j];
+                        }
+                        names[from_exc_name_idx] = buf2;
+                        from_exc_name_idx += 1;
+                    }
+                }
+            }
+
             break :blk names;
         };
 
-        // Runtime storage for exception types
-        var exception_types: [num_exceptions]?*PyObject = [_]?*PyObject{null} ** num_exceptions;
+        // Build a comptime list of all exception names (explicit + .from) for lookup
+        const all_exception_names: [num_all_exceptions][*:0]const u8 = blk: {
+            @setEvalBranchQuota(std.math.maxInt(u32));
+            var exc_names: [num_all_exceptions][*:0]const u8 = undefined;
+            for (exceptions, 0..) |exc, i| {
+                exc_names[i] = exc.name;
+            }
+            var fe_idx: usize = num_exceptions;
+            for (from_entries) |entry| {
+                if (from_mod.isSub(entry)) continue;
+                const ns = from_mod.resolveNamespace(entry);
+                const opts = from_mod.getSourceOptions(entry);
+                const decls = @typeInfo(ns).@"struct".decls;
+                for (decls) |d| {
+                    if (from_mod.shouldExportAsException(ns, d.name, opts, explicit_names)) {
+                        exc_names[fe_idx] = from_mod.comptimeStrZ(d.name);
+                        fe_idx += 1;
+                    }
+                }
+            }
+            break :blk exc_names;
+        };
+
+        // Runtime storage for exception types (explicit + .from)
+        var exception_types: [num_all_exceptions]?*PyObject = [_]?*PyObject{null} ** num_all_exceptions;
 
         /// Initialize the module using multi-phase initialization (PEP 489).
         /// Returns a module def object; Python calls moduleExec to populate it.
@@ -1131,6 +1759,16 @@ pub fn module(comptime config: anytype) type {
         /// Get an exception reference by index (for use in raise)
         pub fn getException(comptime idx: usize) ExceptionRef {
             return ExceptionRef{ .idx = idx };
+        }
+
+        /// Get an exception reference by name (for .from exceptions).
+        /// Example: Module.getExceptionByName("MyError").raise("something went wrong");
+        pub fn getExceptionByName(comptime name: []const u8) ExceptionRef {
+            inline for (0..num_all_exceptions) |i| {
+                if (std.mem.eql(u8, std.mem.span(all_exception_names[i]), name))
+                    return ExceptionRef{ .idx = i };
+            }
+            @compileError("Unknown exception: " ++ name);
         }
 
         // Expose class types for external use

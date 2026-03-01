@@ -105,7 +105,30 @@ pub export fn PyInit_mylib() ?*pyoz.PyObject {
 }
 ```
 
+## Auto-Scan Alternative
+
+If you're using the `.from` API, you can create submodules declaratively with `pyoz.sub()` instead of writing manual init code:
+
+```zig
+const string_utils = @import("string_utils.zig");
+const io_utils = @import("io_utils.zig");
+
+const Example = pyoz.module(.{
+    .name = "example",
+    .from = &.{
+        math,
+        pyoz.sub("strings", string_utils),
+        pyoz.sub("io", io_utils),
+    },
+});
+```
+
+All public functions, classes, enums, and constants in the namespace are auto-registered into the submodule. Submodule docstrings come from a `pub const __doc__` in the namespace. You can also combine `pyoz.sub()` with `pyoz.source()` for filtering.
+
+See [Auto-Scan (.from)](from.md) for the full guide.
+
 ## Next Steps
 
+- [Auto-Scan (.from)](from.md) - Declarative submodules with `pyoz.sub()`
 - [Stubs](stubs.md) - Type stub generation
 - [Functions](functions.md) - Function definitions
