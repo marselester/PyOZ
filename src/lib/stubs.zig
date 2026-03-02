@@ -45,7 +45,7 @@ fn isPropertyAccessor(comptime T: type, comptime decl_name: []const u8) bool {
 
 /// Coerce a comptime string declaration to []const u8.
 /// Handles string literals (*const [N:0]u8), [*:0]const u8, and []const u8.
-fn asSlice(comptime val: anytype) []const u8 {
+pub fn asSlice(comptime val: anytype) []const u8 {
     const T = @TypeOf(val);
     if (T == []const u8) return val;
     return std.mem.span(@as([*:0]const u8, val));
@@ -321,6 +321,123 @@ fn zigTypeToNumpyDtype(comptime T: type) []const u8 {
 }
 
 // =============================================================================
+// __text_signature__ / ml_doc builder
+// =============================================================================
+
+/// Method kind for text signature generation.
+/// Determines the hidden parameter prefix that CPython strips from signatures.
+pub const MethodKind = enum {
+    module_func, // $module — module-level function
+    instance_method, // $self — instance method
+    static_method, // (none) — static method
+    class_method, // $type — class method
+};
+
+/// Build an ml_doc string with an embedded __text_signature__.
+///
+/// CPython parses signatures from ml_doc using the Argument Clinic format:
+///   "funcname($module, arg0, arg1, /)\n--\n\nDocstring text"
+///
+/// The signature portion is extracted as __text_signature__ and used by
+/// help() and inspect.signature() to show proper parameter names.
+pub fn buildMlDoc(
+    comptime name: []const u8,
+    comptime Fn: type,
+    comptime kind: MethodKind,
+    comptime is_named_kwargs: bool,
+    comptime doc: ?[*:0]const u8,
+    comptime param_names: ?[]const u8,
+) [*:0]const u8 {
+    comptime {
+        const fn_info = @typeInfo(Fn).@"fn";
+        const params = fn_info.params;
+
+        var result: []const u8 = name ++ "(";
+
+        // Hidden parameter prefix (stripped by inspect)
+        const hidden: ?[]const u8 = switch (kind) {
+            .module_func => "$module",
+            .instance_method => "$self",
+            .class_method => "$type",
+            .static_method => null,
+        };
+
+        if (is_named_kwargs) {
+            // Named kwargs: funcname($module, /, field1, field2=None)
+            var need_comma = false;
+            if (hidden) |h| {
+                result = result ++ h ++ ", /";
+                need_comma = true;
+            }
+
+            if (params.len >= 1) {
+                const ArgsWrapperType = params[0].type.?;
+                if (@hasDecl(ArgsWrapperType, "ArgsStruct")) {
+                    const ArgsStructType = ArgsWrapperType.ArgsStruct;
+                    const args_fields = @typeInfo(ArgsStructType).@"struct".fields;
+
+                    for (args_fields) |field| {
+                        if (need_comma) {
+                            result = result ++ ", ";
+                        }
+                        result = result ++ field.name;
+                        if (field.default_value_ptr != null or @typeInfo(field.type) == .optional) {
+                            result = result ++ "=None";
+                        }
+                        need_comma = true;
+                    }
+                }
+            }
+        } else {
+            // Regular positional: funcname($module, arg0, arg1, /)
+            var has_any = false;
+            if (hidden) |h| {
+                result = result ++ h;
+                has_any = true;
+            }
+
+            // Skip self/cls parameter for instance/class methods
+            const skip: usize = switch (kind) {
+                .instance_method, .class_method => 1,
+                .module_func, .static_method => 0,
+            };
+
+            var arg_idx: usize = 0;
+            for (params[skip..]) |param| {
+                if (param.type) |ptype| {
+                    if (has_any) result = result ++ ", ";
+                    if (param_names) |pn| {
+                        result = result ++ getParamName(pn, arg_idx);
+                    } else {
+                        result = result ++ std.fmt.comptimePrint("arg{d}", .{arg_idx});
+                    }
+                    // Mark optional parameters
+                    if (@typeInfo(ptype) == .optional) {
+                        result = result ++ "=None";
+                    }
+                    has_any = true;
+                    arg_idx += 1;
+                }
+            }
+
+            // Mark as positional-only (trailing /)
+            if (has_any) {
+                result = result ++ ", /";
+            }
+        }
+
+        result = result ++ ")\n--\n\n";
+
+        // Append docstring
+        if (doc) |d| {
+            result = result ++ std.mem.span(d);
+        }
+
+        return from_mod.comptimeStrZ(result);
+    }
+}
+
+// =============================================================================
 // Stub Writer
 // =============================================================================
 
@@ -506,6 +623,7 @@ pub fn generateFunctionStub(
     comptime Fn: type,
     comptime doc: ?[]const u8,
     comptime is_named_kwargs: bool,
+    comptime param_names: ?[]const u8,
 ) []const u8 {
     comptime {
         var result: []const u8 = "def " ++ name ++ "(";
@@ -545,7 +663,7 @@ pub fn generateFunctionStub(
                 }
             }
         } else {
-            // Regular positional arguments - use arg0, arg1, etc.
+            // Regular positional arguments
             var arg_idx: usize = 0;
             for (params) |param| {
                 if (param.type) |ptype| {
@@ -553,7 +671,11 @@ pub fn generateFunctionStub(
                         result = result ++ ", ";
                     }
 
-                    result = result ++ std.fmt.comptimePrint("arg{d}", .{arg_idx}) ++ ": " ++ zigTypeToPython(ptype);
+                    const pname = if (param_names) |pn|
+                        getParamName(pn, arg_idx)
+                    else
+                        std.fmt.comptimePrint("arg{d}", .{arg_idx});
+                    result = result ++ pname ++ ": " ++ zigTypeToPython(ptype);
                     arg_idx += 1;
                 }
             }
@@ -587,8 +709,9 @@ pub fn generateFunctionStub(
 }
 
 /// Generate stub for a class
-pub fn generateClassStub(comptime name: []const u8, comptime T: type, comptime base: ?[]const u8) []const u8 {
+pub fn generateClassStub(comptime name: []const u8, comptime T: type, comptime base: ?[]const u8, comptime source_text: ?[:0]const u8) []const u8 {
     comptime {
+        const source_parser = @import("source_parser.zig");
         var result: []const u8 = if (base) |b|
             "class " ++ name ++ "(" ++ b ++ "):\n"
         else
@@ -596,9 +719,14 @@ pub fn generateClassStub(comptime name: []const u8, comptime T: type, comptime b
         const struct_info = @typeInfo(T).@"struct";
         const fields = struct_info.fields;
 
-        // Class docstring — emit actual content from __doc__
+        // Class docstring — emit actual content from __doc__ or source-parsed /// comment
         if (@hasDecl(T, "__doc__")) {
             result = result ++ "    \"\"\"" ++ asSlice(@field(T, "__doc__")) ++ "\"\"\"\n";
+        } else if (source_text) |src| {
+            const Info = source_parser.SourceInfo(src);
+            if (Info.getDoc(name)) |doc| {
+                result = result ++ "    \"\"\"" ++ doc ++ "\"\"\"\n";
+            }
         }
 
         // Detect if this is a PyOZ subclass
@@ -663,12 +791,21 @@ pub fn generateClassStub(comptime name: []const u8, comptime T: type, comptime b
             const DeclType = @TypeOf(decl_value);
 
             if (@typeInfo(DeclType) == .@"fn") {
-                // Look up optional method docstring
+                // Look up optional method docstring (explicit > source-parsed)
                 const method_doc: ?[]const u8 = if (@hasDecl(T, decl.name ++ "__doc__"))
                     asSlice(@field(T, decl.name ++ "__doc__"))
-                else
-                    null;
-                result = result ++ generateMethodStub(decl.name, DeclType, T, method_doc);
+                else if (source_text) |src| blk: {
+                    const SrcInfo = source_parser.SourceInfo(src);
+                    break :blk SrcInfo.getMethodDoc(name, decl.name);
+                } else null;
+                // Look up optional method param names (explicit > source-parsed)
+                const method_params: ?[]const u8 = if (@hasDecl(T, decl.name ++ "__params__"))
+                    asSlice(@field(T, decl.name ++ "__params__"))
+                else if (source_text) |src| blk: {
+                    const SrcInfo = source_parser.SourceInfo(src);
+                    break :blk SrcInfo.getMethodParams(name, decl.name);
+                } else null;
+                result = result ++ generateMethodStub(decl.name, DeclType, T, method_doc, method_params);
             }
         }
 
@@ -795,9 +932,15 @@ pub fn generateClassStub(comptime name: []const u8, comptime T: type, comptime b
             const call_info = @typeInfo(@TypeOf(@field(T, "__call__"))).@"fn";
             const call_params = call_info.params;
             result = result ++ "    def __call__(self";
-            // Check for parameter name override
-            const has_call_params = @hasDecl(T, "__call____params__");
-            const call_params_str: []const u8 = if (has_call_params) asSlice(@field(T, "__call____params__")) else "";
+            // Check for parameter name override (explicit > source-parsed > fallback)
+            const has_explicit_call_params = @hasDecl(T, "__call____params__");
+            const call_params_str: []const u8 = if (has_explicit_call_params)
+                asSlice(@field(T, "__call____params__"))
+            else if (source_text) |src| blk: {
+                const CallInfo = source_parser.SourceInfo(src);
+                break :blk CallInfo.getMethodParams(name, "__call__") orelse "";
+            } else "";
+            const has_call_params = call_params_str.len > 0;
             var cidx: usize = 0;
             for (call_params[1..]) |param| {
                 if (param.type) |ptype| {
@@ -905,15 +1048,20 @@ pub fn generateClassStub(comptime name: []const u8, comptime T: type, comptime b
 }
 
 /// Generate stub for a single method
-fn generateMethodStub(comptime name: []const u8, comptime Fn: type, comptime ClassType: type, comptime doc: ?[]const u8) []const u8 {
+fn generateMethodStub(comptime name: []const u8, comptime Fn: type, comptime ClassType: type, comptime doc: ?[]const u8, comptime param_names_override: ?[]const u8) []const u8 {
     comptime {
         var result: []const u8 = "";
         const fn_info = @typeInfo(Fn).@"fn";
         const params = fn_info.params;
 
         // Check for parameter name override
-        const has_param_names = @hasDecl(ClassType, name ++ "__params__");
-        const param_names_str: []const u8 = if (has_param_names) asSlice(@field(ClassType, name ++ "__params__")) else "";
+        const has_param_names = param_names_override != null or @hasDecl(ClassType, name ++ "__params__");
+        const param_names_str: []const u8 = if (param_names_override) |pn|
+            pn
+        else if (@hasDecl(ClassType, name ++ "__params__"))
+            asSlice(@field(ClassType, name ++ "__params__"))
+        else
+            "";
 
         if (params.len == 0) {
             // No parameters - static method
@@ -1110,7 +1258,7 @@ pub fn generateModuleStubs(comptime config: anytype) []const u8 {
                         }
                     }
                 }
-                result = result ++ generateClassStub(cls_name, cls.zig_type, base_name);
+                result = result ++ generateClassStub(cls_name, cls.zig_type, base_name, null);
             }
         }
 
@@ -1135,6 +1283,7 @@ pub fn generateModuleStubs(comptime config: anytype) []const u8 {
                 @TypeOf(f.func),
                 if (f.doc) |d| std.mem.span(d) else null,
                 is_named,
+                null,
             );
         }
 
@@ -1174,7 +1323,8 @@ pub fn generateModuleStubs(comptime config: anytype) []const u8 {
                 for (decls) |d| {
                     if (from_mod.shouldExportAsClass(ns, d.name, opts, explicit_names)) {
                         const ClassType = @field(ns, d.name);
-                        result = result ++ generateClassStub(d.name, ClassType, null);
+                        const class_src = from_mod.resolveSource(entry);
+                        result = result ++ generateClassStub(d.name, ClassType, null, class_src);
                     }
                 }
 
@@ -1202,12 +1352,14 @@ pub fn generateModuleStubs(comptime config: anytype) []const u8 {
                         const func_val = @field(ns, d.name);
                         const FnType = @TypeOf(func_val);
                         const is_named = from_mod.isNamedKwargsFunc(FnType);
-                        const doc_val = from_mod.getDocstring(ns, d.name);
+                        const doc_val = from_mod.getDocstring(entry, d.name);
+                        const from_param_names = from_mod.getParamNames(entry, d.name);
                         result = result ++ generateFunctionStub(
                             d.name,
                             FnType,
                             if (doc_val) |dv| std.mem.span(dv) else null,
                             is_named,
+                            from_param_names,
                         );
                     }
                 }
@@ -1229,15 +1381,17 @@ pub fn generateModuleStubs(comptime config: anytype) []const u8 {
                             const sfunc = @field(sub_ns, sd.name);
                             const SFnType = @TypeOf(sfunc);
                             const s_is_named = from_mod.isNamedKwargsFunc(SFnType);
-                            const s_doc = from_mod.getDocstring(sub_ns, sd.name);
+                            const s_doc = from_mod.getDocstring(entry, sd.name);
                             // Generate as staticmethod
                             result = result ++ "    @staticmethod\n";
                             // Indent the function stub
+                            const s_params = from_mod.getParamNames(entry, sd.name);
                             const fn_stub = generateFunctionStub(
                                 sd.name,
                                 SFnType,
                                 if (s_doc) |sv| std.mem.span(sv) else null,
                                 s_is_named,
+                                s_params,
                             );
                             // Add 4-space indent to each line
                             var line_start: usize = 0;

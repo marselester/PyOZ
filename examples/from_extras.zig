@@ -1,8 +1,8 @@
-//! Comprehensive .from auto-scan demo — auto-discovered via PyOZ's .from API.
+//! Extra utilities auto-discovered via .from
 //!
 //! This file demonstrates ALL .from auto-scan features:
 //!   - pub fn           → auto-registered as Python function
-//!   - {name}__doc__    → consumed as docstring for {name}
+//!   - /// doc comments → auto-extracted as docstrings (via withSource)
 //!   - pub const scalar → Python module constant
 //!   - pub const string → Python module constant
 //!   - pyoz.Args(T)     → auto-detected as named keyword arguments
@@ -13,17 +13,10 @@
 //!   - pyoz.ErrorMap    → auto-merged error mappings
 //!   - __tests__        → auto-merged inline tests
 //!   - __benchmarks__   → auto-merged inline benchmarks
-//!   - __doc__          → namespace-level module docstring fallback
 //!   - _prefixed names  → auto-skipped (private convention)
 
 const std = @import("std");
 const pyoz = @import("PyOZ");
-
-// ============================================================================
-// Namespace-level docstring (used as module docstring fallback if .doc not set)
-// ============================================================================
-
-pub const __doc__ = "Extra utilities auto-discovered via .from";
 
 // ============================================================================
 // String utilities (pub fn → function)
@@ -44,7 +37,6 @@ pub fn count_words(s: []const u8) i64 {
     }
     return count;
 }
-pub const count_words__doc__ = "Count the number of words in a string";
 
 /// Check if a string is a pangram (contains every letter a-z).
 pub fn is_pangram(s: []const u8) bool {
@@ -58,13 +50,11 @@ pub fn is_pangram(s: []const u8) bool {
     }
     return seen == (1 << 26) - 1;
 }
-pub const is_pangram__doc__ = "Check if a string is a pangram (contains every letter a-z)";
 
 /// Get the length of a string in bytes.
 pub fn string_len(s: []const u8) i64 {
     return @intCast(s.len);
 }
-pub const string_len__doc__ = "Get the length of a string in bytes";
 
 // ============================================================================
 // Number utilities (pub fn → function)
@@ -84,7 +74,6 @@ pub fn fibonacci(n: i64) i64 {
     }
     return b;
 }
-pub const fibonacci__doc__ = "Calculate the Fibonacci number at position n";
 
 /// Check if a number is a perfect square.
 pub fn is_perfect_square(n: i64) bool {
@@ -94,13 +83,11 @@ pub fn is_perfect_square(n: i64) bool {
     const int_root: i64 = @intFromFloat(root);
     return int_root * int_root == n;
 }
-pub const is_perfect_square__doc__ = "Check if a number is a perfect square";
 
 /// Clamp a value between min and max bounds.
 pub fn clamp_value(value: f64, min_val: f64, max_val: f64) f64 {
     return @max(min_val, @min(max_val, value));
 }
-pub const clamp_value__doc__ = "Clamp a value between min and max bounds";
 
 /// Compute the greatest common divisor of two integers.
 pub fn from_gcd(a: i64, b: i64) i64 {
@@ -113,7 +100,6 @@ pub fn from_gcd(a: i64, b: i64) i64 {
     }
     return x;
 }
-pub const from_gcd__doc__ = "Compute the greatest common divisor of two integers";
 
 /// Compute the least common multiple of two integers.
 pub fn from_lcm(a: i64, b: i64) i64 {
@@ -121,7 +107,6 @@ pub fn from_lcm(a: i64, b: i64) i64 {
     const g = from_gcd(a, b);
     return @divExact(if (a < 0) -a else a, g) * (if (b < 0) -b else b);
 }
-pub const from_lcm__doc__ = "Compute the least common multiple of two integers";
 
 // ============================================================================
 // Keyword argument function (auto-detected: pyoz.Args(T) → kwfunc)
@@ -133,14 +118,13 @@ pub fn safe_sqrt(args: pyoz.Args(struct { value: f64, default: ?f64 = null })) f
     if (args.value.value < 0) return args.value.default orelse 0.0;
     return @sqrt(args.value.value);
 }
-pub const safe_sqrt__doc__ = "Square root with optional default for negative values";
 
 // ============================================================================
 // Struct → Class (auto-detected: struct with fields/methods/__doc__)
 // ============================================================================
 
+/// A 2D vector with x and y components.
 pub const Vec2 = struct {
-    pub const __doc__: [*:0]const u8 = "A 2D vector with x and y components";
 
     x: f64,
     y: f64,
@@ -183,6 +167,15 @@ pub const Priority = enum(i32) {
     Medium = 2,
     High = 3,
     Critical = 4,
+};
+
+/// IntEnum with unsigned tag (u8) — sequential values starting from 0
+pub const OpCode = enum(u8) {
+    OP_NOP,
+    OP_READ,
+    OP_WRITE,
+    OP_SYNC,
+    OP_CLOSE,
 };
 
 /// StrEnum — plain enum without integer tags

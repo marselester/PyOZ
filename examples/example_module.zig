@@ -3184,8 +3184,9 @@ const Example = pyoz.module(.{
     },
     // .from: auto-scan a Zig namespace — all pub fns, constants, and
     // docstrings are discovered automatically with zero registration boilerplate.
+    // withSource enables automatic /// doc comments and parameter name extraction.
     .from = &.{
-        @import("from_extras.zig"),
+        pyoz.withSource(@import("from_extras.zig"), @embedFile("from_extras.zig")),
     },
 });
 

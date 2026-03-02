@@ -34,16 +34,22 @@ const Example = pyoz.module(.{
 Move your declarations into separate files and let `.from` scan them:
 
 ```zig
-const math = @import("math.zig");
-const types = @import("types.zig");
+const pyoz = @import("PyOZ");
 
 const Example = pyoz.module(.{
     .name = "example",
-    .from = &.{ math, types },
+    .from = &.{
+        pyoz.withSource(@import("math.zig"), @embedFile("math.zig")),
+        pyoz.withSource(@import("types.zig"), @embedFile("types.zig")),
+    },
 });
 ```
 
 PyOZ inspects every `pub` declaration in each namespace at compile time and registers it as the appropriate Python construct — function, class, enum, or constant.
+
+`withSource` enables automatic extraction of `///` doc comments as docstrings and real function parameter names for `help()`, `inspect.signature()`, and `.pyi` stubs — no boilerplate needed in the `.from` files. See [Source Introspection](#source-introspection-with-withsource) for details.
+
+You can also use bare imports without `withSource` — everything works, but you'll need explicit `__doc__` constants and parameter names will default to `arg0`, `arg1`, etc.
 
 ## Auto-Detection Rules
 
@@ -74,59 +80,118 @@ These declarations are silently skipped (not exported, no error):
 - **Incompatible signatures** — functions with generic/comptime/`type` parameters
 - **Type aliases** to primitive types
 
-## Docstring Convention
+## Docstrings
 
-Since `.from` files are pure Zig with no registration calls, docstrings use a naming convention — declare a `pub const` with the suffix `__doc__`:
+### With `withSource` (recommended)
+
+When using `withSource`, just write standard Zig `///` doc comments — they're automatically extracted as Python docstrings:
 
 ```zig
+/// Add two integers together.
 pub fn add(a: i64, b: i64) i64 {
     return a + b;
 }
-pub const add__doc__ = "Add two integers together";
 
+/// Divide a by b (raises ZeroDivisionError if b=0).
 pub fn divide(a: f64, b: f64) !f64 {
     if (b == 0) return error.DivisionByZero;
     return a / b;
 }
-pub const divide__doc__ = "Divide a by b (raises ZeroDivisionError if b=0)";
 ```
 
-The `__doc__` constant is consumed and never exported to Python. Functions without a `__doc__` constant get no docstring.
+No `__doc__` boilerplate needed. `help(example.add)` shows the doc comment, and parameter names come from the Zig source automatically.
 
-### Class Docstrings
-
-Classes use their own `__doc__` field as usual:
+Class docstrings use `///` above the struct definition:
 
 ```zig
+/// A 2D point in space.
 pub const Point = struct {
-    pub const __doc__: [*:0]const u8 = "A 2D point in space";
     x: f64,
     y: f64,
 
     pub fn length(self: *const Point) f64 {
         return @sqrt(self.x * self.x + self.y * self.y);
     }
-    pub const length__doc__: [*:0]const u8 = "Distance from origin";
 };
 ```
 
-### Module Docstring
-
-If the module config has no `.doc` field, PyOZ looks for a namespace-level `__doc__` in the first non-submodule `.from` entry:
+Module-level `//!` comments become the module docstring:
 
 ```zig
-// math.zig
-pub const __doc__ = "Mathematical utility functions";
+//! Mathematical utility functions.
+//! Provides fast Zig implementations of common math operations.
 
+/// Add two integers together.
 pub fn add(a: i64, b: i64) i64 { return a + b; }
 ```
 
+### Without `withSource` (explicit convention)
+
+Without `withSource`, docstrings use a naming convention — declare a `pub const` with the suffix `__doc__`:
+
 ```zig
-// root
-const Example = pyoz.module(.{
-    .name = "example",
-    .from = &.{ math },  // module docstring comes from math.__doc__
-});
+pub fn add(a: i64, b: i64) i64 {
+    return a + b;
+}
+pub const add__doc__ = "Add two integers together";
+```
+
+The `__doc__` constant is consumed and never exported to Python. Classes use `pub const __doc__` inside the struct, methods use `pub const method__doc__`.
+
+### Module Docstring
+
+If the module config has no `.doc` field, PyOZ looks for a module docstring from the first non-submodule `.from` entry. With `withSource`, this is extracted from `//!` comments. Without `withSource`, it falls back to a namespace-level `pub const __doc__`.
+
+### Priority
+
+Explicit `{name}__doc__` constants always take priority over `///` comments. This means you can use `withSource` for most functions and override specific docstrings with explicit constants when needed.
+
+## Source Introspection with `withSource`
+
+Zig's `@typeInfo` exposes function parameter types but not names. Without source introspection, stubs show `def add(arg0: int, arg1: int)` and `help()` shows `add(arg0, arg1, /)`.
+
+`pyoz.withSource` solves this by parsing the Zig source at compile time to extract real parameter names and `///` doc comments:
+
+```zig
+// root.zig
+.from = &.{
+    pyoz.withSource(@import("math.zig"), @embedFile("math.zig")),
+},
+```
+
+Both `@import` and `@embedFile` are called at your module config site, so file paths resolve correctly. The `.from` file itself needs no boilerplate at all.
+
+### What `withSource` enables
+
+| Feature | Without `withSource` | With `withSource` |
+|---------|---------------------|-------------------|
+| `help(func)` signature | `add(arg0, arg1, /)` | `add(a, b, /)` |
+| `inspect.signature(func)` | `(arg0, arg1, /)` | `(a, b, /)` |
+| `.pyi` stub params | `def add(arg0: int, arg1: int)` | `def add(a: int, b: int)` |
+| Function docstrings | Requires `pub const add__doc__ = "..."` | Automatic from `///` comments |
+| Module docstring | Requires `pub const __doc__ = "..."` | Automatic from `//!` comments |
+| Class docstring | Requires `pub const __doc__` inside struct | Automatic from `///` above struct |
+
+### Binary safety
+
+The source text is parsed at compile time only. It is NOT embedded in the final binary — verified with `strings` on `ReleaseFast` builds showing zero matches.
+
+### Composing with other wrappers
+
+`withSource` composes with `pyoz.source()` and `pyoz.sub()`:
+
+```zig
+.from = &.{
+    // Filtered with source introspection
+    pyoz.source(
+        pyoz.withSource(@import("math.zig"), @embedFile("math.zig")),
+        .{ .only = &.{ "add", "multiply" } },
+    ),
+    // Submodule with source introspection
+    pyoz.sub("utils",
+        pyoz.withSource(@import("utils.zig"), @embedFile("utils.zig")),
+    ),
+},
 ```
 
 ## Keyword Arguments
@@ -136,11 +201,11 @@ const Example = pyoz.module(.{
 ```zig
 const pyoz = @import("PyOZ");
 
+/// Square root with optional default for negative values.
 pub fn safe_sqrt(args: pyoz.Args(struct { value: f64, default: ?f64 = null })) f64 {
     if (args.value.value < 0) return args.value.default orelse 0.0;
     return @sqrt(args.value.value);
 }
-pub const safe_sqrt__doc__ = "Square root with optional default for negative values";
 ```
 
 In Python: `safe_sqrt(value=4.0)` or `safe_sqrt(value=-1.0, default=-1.0)`
@@ -351,6 +416,8 @@ The `_module` and `PyInit_mymath` declarations are skipped automatically (`_` pr
 
 `.from` entries are fully included in the auto-generated `.pyi` type stubs. Functions, classes, enums, constants, exceptions, and submodules all appear in the stub file with correct type annotations and docstrings.
 
+When using `withSource`, stubs show real Zig parameter names (e.g. `def add(a: int, b: int)` instead of `def add(arg0: int, arg1: int)`) and include `///` docstrings automatically.
+
 Submodules are represented as classes with `@staticmethod` methods in the stub.
 
 ## ABI3 Compatibility
@@ -360,12 +427,13 @@ Submodules are represented as classes with `@staticmethod` methods in the stub.
 ## Complete Example
 
 ```zig
-// math.zig — pure Zig, no PyOZ imports needed for basic functions
+// math.zig — pure Zig, no boilerplate needed
 const std = @import("std");
 
+/// Add two integers.
 pub fn add(a: i64, b: i64) i64 { return a + b; }
-pub const add__doc__ = "Add two integers";
 
+/// Calculate the Fibonacci number at position n.
 pub fn fibonacci(n: i64) i64 {
     if (n <= 0) return 0;
     if (n == 1) return 1;
@@ -379,7 +447,6 @@ pub fn fibonacci(n: i64) i64 {
     }
     return b;
 }
-pub const fibonacci__doc__ = "Calculate the Fibonacci number at position n";
 
 pub const PI: f64 = 3.14159265358979;
 pub const MAX_FIB_INDEX: i64 = 92;
@@ -387,15 +454,15 @@ pub const MAX_FIB_INDEX: i64 = 92;
 
 ```zig
 // types.zig
+
+/// A 2D point in space.
 pub const Point = struct {
-    pub const __doc__: [*:0]const u8 = "A 2D point in space";
     x: f64,
     y: f64,
 
     pub fn length(self: *const Point) f64 {
         return @sqrt(self.x * self.x + self.y * self.y);
     }
-    pub const length__doc__: [*:0]const u8 = "Distance from origin";
 };
 
 pub const Color = enum(i32) { Red = 1, Green = 2, Blue = 3 };
@@ -404,12 +471,13 @@ pub const Color = enum(i32) { Red = 1, Green = 2, Blue = 3 };
 ```zig
 // root.zig
 const pyoz = @import("PyOZ");
-const math = @import("math.zig");
-const types = @import("types.zig");
 
 const Example = pyoz.module(.{
     .name = "example",
-    .from = &.{ math, types },
+    .from = &.{
+        pyoz.withSource(@import("math.zig"), @embedFile("math.zig")),
+        pyoz.withSource(@import("types.zig"), @embedFile("types.zig")),
+    },
 });
 
 pub export fn PyInit_example() ?*pyoz.PyObject {
@@ -421,6 +489,7 @@ In Python:
 
 ```python
 import example
+import inspect
 
 example.add(2, 3)           # 5
 example.fibonacci(10)       # 55
@@ -430,6 +499,11 @@ p = example.Point(3.0, 4.0)
 p.length()                  # 5.0
 
 example.Color.Red           # Color.Red (IntEnum, value=1)
+
+# Real parameter names and docstrings from Zig source
+inspect.signature(example.add)  # (a, b, /)
+help(example.add)               # add(a, b, /) — Add two integers.
+example.Point.__doc__           # "A 2D point in space."
 ```
 
 ## Next Steps

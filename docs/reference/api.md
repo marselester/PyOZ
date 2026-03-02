@@ -50,6 +50,16 @@ pyoz.source(math, .{ .exclude = &.{ "internal_helper" } })
 
 `.only` and `.exclude` are mutually exclusive.
 
+### `pyoz.withSource(namespace, source)`
+
+Attach source text to a namespace for automatic `///` doc comment and parameter name extraction.
+
+```zig
+pyoz.withSource(@import("math.zig"), @embedFile("math.zig"))
+```
+
+Enables: real parameter names in `help()` / `inspect.signature()` / `.pyi` stubs, `///` doc comments as Python docstrings, `//!` module-level doc comments, and `///` above structs as class docstrings. Composes with `source()` and `sub()`. Source text is NOT embedded in the final binary.
+
 ### `pyoz.sub(name, namespace)`
 
 Create a submodule from a namespace.
@@ -80,11 +90,15 @@ pub const __errors__ = pyoz.ErrorMap(.{
 
 ### Docstring Convention
 
+With `withSource`, `///` doc comments are automatically extracted as docstrings and `//!` comments become the module docstring. Without `withSource`, use explicit constants:
+
 ```zig
 pub fn add(a: i64, b: i64) i64 { return a + b; }
 pub const add__doc__ = "Add two integers";       // docstring for add
 pub const __doc__ = "Module docstring fallback";  // namespace-level docstring
 ```
+
+Explicit `{name}__doc__` constants take priority over `///` comments.
 
 ## Functions
 

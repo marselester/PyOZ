@@ -15,6 +15,7 @@ const unwrapSignature = @import("../root.zig").unwrapSignature;
 
 const class_mod = @import("mod.zig");
 const ClassInfo = class_mod.ClassInfo;
+const source_parser = @import("../source_parser.zig");
 
 /// Check if a field name indicates a private field (starts with underscore)
 /// Private fields are not exposed to Python as properties or __init__ arguments
@@ -41,6 +42,14 @@ pub fn PropertiesBuilder(comptime T: type, comptime Parent: type, comptime class
     const fields = struct_info.fields;
 
     return struct {
+        // Source text for comptime source parsing (looked up from class_infos)
+        const class_source: ?[:0]const u8 = class_mod.lookupSourceText(class_infos, T);
+        const class_struct_name: ?[]const u8 = blk: {
+            for (class_infos) |info| {
+                if (info.zig_type == T) break :blk std.mem.span(info.name);
+            }
+            break :blk null;
+        };
         // Check if struct has custom getter or setter
         pub fn hasCustomGetter(comptime field_name: []const u8) bool {
             const getter_name = "get_" ++ field_name;
@@ -115,7 +124,8 @@ pub fn PropertiesBuilder(comptime T: type, comptime Parent: type, comptime class
             return false;
         }
 
-        /// Get property docstring
+        /// Get property docstring, falling back to source-parsed /// doc comment
+        /// above the getter function (get_<prop_name>).
         pub fn getPropertyDoc(comptime prop_name: []const u8) ?[*:0]const u8 {
             const doc_name = prop_name ++ "__doc__";
             if (@hasDecl(T, doc_name)) {
@@ -124,6 +134,15 @@ pub fn PropertiesBuilder(comptime T: type, comptime Parent: type, comptime class
                     @compileError(doc_name ++ " must be declared as [*:0]const u8");
                 }
                 return @field(T, doc_name);
+            }
+            // Fall back to source-parsed /// doc comment above get_<prop_name>
+            if (class_source) |src| {
+                if (class_struct_name) |sname| {
+                    const Info = source_parser.SourceInfo(src);
+                    if (Info.getMethodDoc(sname, "get_" ++ prop_name)) |doc| {
+                        return class_mod.comptimeStrZ(doc);
+                    }
+                }
             }
             return null;
         }

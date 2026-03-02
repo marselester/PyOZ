@@ -13,6 +13,7 @@ const py = root.py;
 const PyObject = py.PyObject;
 const ExcBase = root.ExcBase;
 const ErrorMapping = root.ErrorMapping;
+const source_parser = @import("source_parser.zig");
 
 // =============================================================================
 // Source Options
@@ -81,6 +82,20 @@ pub fn source(comptime namespace: type, comptime options: SourceOptions) type {
     };
 }
 
+/// Attach source text to a namespace for automatic docstring and parameter extraction.
+/// The `@import` and `@embedFile` are both called at the user's call site,
+/// so file paths resolve correctly without any boilerplate in the `.from` file.
+///
+/// Usage:
+///   .from = &.{ pyoz.withSource(@import("funcs.zig"), @embedFile("funcs.zig")) }
+pub fn withSource(comptime namespace: type, comptime src: [:0]const u8) type {
+    return struct {
+        pub const _is_pyoz_with_source = true;
+        pub const _ws_namespace = namespace;
+        pub const _ws_source: [:0]const u8 = src;
+    };
+}
+
 /// Declare a submodule from a namespace.
 ///
 /// Usage:
@@ -134,11 +149,14 @@ pub fn isSub(comptime entry: type) bool {
 }
 
 /// Extract the actual namespace type from a .from entry.
-/// Works for bare namespaces, source(), and the inner part of sub().
+/// Works for bare namespaces, source(), withSource(), and the inner part of sub().
 pub fn resolveNamespace(comptime entry: type) type {
     // Use @hasDecl directly so Zig can prune branches for bare namespace types
+    if (@hasDecl(entry, "_is_pyoz_with_source")) {
+        return resolveNamespace(entry._ws_namespace);
+    }
     if (@hasDecl(entry, "_is_pyoz_source")) {
-        return entry._source_namespace;
+        return resolveNamespace(entry._source_namespace);
     }
     if (@hasDecl(entry, "_is_pyoz_sub")) {
         return resolveNamespace(entry._sub_inner);
@@ -196,9 +214,41 @@ pub fn comptimeStrZ(comptime s: []const u8) [*:0]const u8 {
     return (s ++ "\x00")[0..s.len :0].ptr;
 }
 
-/// Look up the docstring for a declaration in its namespace.
-/// Returns the value of `{name}__doc__` if it exists, null otherwise.
-pub fn getDocstring(comptime ns: type, comptime name: []const u8) ?[*:0]const u8 {
+/// Resolve source text from a `.from` entry by walking the wrapper chain.
+/// Checks (in order): withSource() wrapper, source() inner, sub() inner,
+/// then the bare namespace for `__source__` (function or constant form).
+pub fn resolveSource(comptime entry: type) ?[:0]const u8 {
+    // withSource() wrapper — has explicit source text
+    if (@hasDecl(entry, "_is_pyoz_with_source")) {
+        return entry._ws_source;
+    }
+    // source() wrapper — check inner
+    if (@hasDecl(entry, "_is_pyoz_source")) {
+        return resolveSource(entry._source_namespace);
+    }
+    // sub() wrapper — check inner
+    if (@hasDecl(entry, "_is_pyoz_sub")) {
+        return resolveSource(entry._sub_inner);
+    }
+    // Bare namespace — check for __source__ function or constant
+    if (@hasDecl(entry, "__source__")) {
+        const field = @field(entry, "__source__");
+        const T = @TypeOf(field);
+        const info = @typeInfo(T);
+        // Function form: pub fn __source__() [:0]const u8
+        if (info == .@"fn") return field();
+        // Constant form: pub const __source__: [:0]const u8
+        if (info == .pointer) return field;
+    }
+    return null;
+}
+
+/// Look up the docstring for a declaration in a `.from` entry.
+/// Priority: 1. explicit `{name}__doc__`, 2. `///` from source parsing.
+/// Accepts a `.from` entry type (bare namespace, source(), withSource(), or sub() wrapper).
+pub fn getDocstring(comptime entry: type, comptime name: []const u8) ?[*:0]const u8 {
+    const ns = resolveNamespace(entry);
+    // 1. Try explicit name__doc__
     const doc_name = name ++ "__doc__";
     if (@hasDecl(ns, doc_name)) {
         const doc_val = @field(ns, doc_name);
@@ -218,12 +268,22 @@ pub fn getDocstring(comptime ns: type, comptime name: []const u8) ?[*:0]const u8
             }
         }
     }
+    // 2. Try source parser (/// doc comment)
+    if (resolveSource(entry)) |src| {
+        const Info = source_parser.SourceInfo(src);
+        if (Info.getDoc(name)) |doc| {
+            return comptimeStrZ(doc);
+        }
+    }
     return null;
 }
 
-/// Get the namespace-level docstring (__doc__) for use as module docstring.
-/// Returns null if the namespace doesn't have a pub const __doc__.
-pub fn getNamespaceDoc(comptime ns: type) ?[*:0]const u8 {
+/// Get the namespace-level docstring for use as module docstring.
+/// Priority: 1. explicit `__doc__`, 2. `//!` from source parsing.
+/// Accepts a `.from` entry type (bare namespace, source(), withSource(), or sub() wrapper).
+pub fn getNamespaceDoc(comptime entry: type) ?[*:0]const u8 {
+    const ns = resolveNamespace(entry);
+    // 1. Try explicit __doc__
     if (@hasDecl(ns, "__doc__")) {
         const doc_val = @field(ns, "__doc__");
         const DT = @TypeOf(doc_val);
@@ -240,6 +300,57 @@ pub fn getNamespaceDoc(comptime ns: type) ?[*:0]const u8 {
             if (child == .array and child.array.child == u8 and child.array.sentinel_ptr != null) {
                 return doc_val;
             }
+        }
+    }
+    // 2. Try source parser (//! module doc comment)
+    if (resolveSource(entry)) |src| {
+        const Info = source_parser.SourceInfo(src);
+        if (Info.module_doc) |doc| {
+            return comptimeStrZ(doc);
+        }
+    }
+    return null;
+}
+
+/// Look up parameter names for a function in a `.from` entry.
+/// Priority: 1. explicit `{name}__params__`, 2. parsed from source.
+/// Returns comma-separated names (e.g., "a, b") or null.
+/// Accepts a `.from` entry type (bare namespace, source(), withSource(), or sub() wrapper).
+pub fn getParamNames(comptime entry: type, comptime name: []const u8) ?[]const u8 {
+    const ns = resolveNamespace(entry);
+    // 1. Try explicit name__params__
+    const params_name = name ++ "__params__";
+    if (@hasDecl(ns, params_name)) {
+        const val = @field(ns, params_name);
+        const PT = @TypeOf(val);
+        if (PT == []const u8) return val;
+        if (PT == [*:0]const u8) return std.mem.span(val);
+        // Handle string literals
+        const pt_info = @typeInfo(PT);
+        if (pt_info == .pointer and pt_info.pointer.size == .one) {
+            const child = @typeInfo(pt_info.pointer.child);
+            if (child == .array and child.array.child == u8) {
+                return std.mem.span(@as([*:0]const u8, val));
+            }
+        }
+    }
+    // 2. Try source parser
+    if (resolveSource(entry)) |src| {
+        const Info = source_parser.SourceInfo(src);
+        return Info.getParamNames(name);
+    }
+    return null;
+}
+
+/// Look up a class doc comment from the source of a `.from` entry.
+/// This is for `.from` classes where the `///` doc is above `pub const Struct = struct`.
+/// Returns null if no source or no doc found.
+/// Accepts a `.from` entry type (bare namespace, source(), withSource(), or sub() wrapper).
+pub fn getClassDoc(comptime entry: type, comptime struct_name: []const u8) ?[*:0]const u8 {
+    if (resolveSource(entry)) |src| {
+        const Info = source_parser.SourceInfo(src);
+        if (Info.getDoc(struct_name)) |doc| {
+            return comptimeStrZ(doc);
         }
     }
     return null;
@@ -726,18 +837,12 @@ pub fn buildExplicitNameSet(comptime config: anytype) []const []const u8 {
 // =============================================================================
 
 /// Check if an enum has an explicit integer tag type (like u8, i32, etc.)
+/// Must match the logic in enums.zig — check for standard integer types that
+/// a user would explicitly specify (u8, u16, u32, u64, i8, i16, i32, i64, etc.).
+/// Auto-generated tags use non-standard bit widths (u1, u2, u3, ...) that won't match.
 pub fn isIntEnum(comptime E: type) bool {
-    const info = @typeInfo(E).@"enum";
-    // Check if the tag type is NOT the default — if it matches the number of fields,
-    // it was auto-generated (StrEnum). If it's a standard integer type, user picked it.
-    const TagType = info.tag_type;
-    const tag_info = @typeInfo(TagType);
-    // Default auto-generated tag types use unsigned integers sized to fit the field count
-    // If the user specified a signed type, or a type larger than needed, it's intentional
-    if (tag_info.int.signedness == .signed) return true;
-    // A user-chosen unsigned type could still have the same bit width
-    // Check if the tag type is explicitly specified by seeing if is_exhaustive is true
-    // and the values are sequential starting from 0
-    if (!info.is_exhaustive) return true;
-    return false;
+    const tag_type = @typeInfo(E).@"enum".tag_type;
+    return tag_type == i8 or tag_type == i16 or tag_type == i32 or tag_type == i64 or
+        tag_type == u8 or tag_type == u16 or tag_type == u32 or tag_type == u64 or
+        tag_type == isize or tag_type == c_int or tag_type == c_long;
 }

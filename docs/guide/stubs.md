@@ -170,7 +170,9 @@ def parse(self, arg0: str) -> Node: ...
 
 ## Stubs for `.from` Entries
 
-When using the [`.from` auto-scan API](from.md), all auto-detected declarations are included in the generated stubs — functions, classes, enums, constants, and exceptions. Docstrings from the `name__doc__` convention are included. Submodules created with `pyoz.sub()` appear as classes with `@staticmethod` methods.
+When using the [`.from` auto-scan API](from.md), all auto-detected declarations are included in the generated stubs — functions, classes, enums, constants, and exceptions. Submodules created with `pyoz.sub()` appear as classes with `@staticmethod` methods.
+
+When using [`pyoz.withSource()`](from.md#source-introspection-with-withsource), stubs automatically use real Zig parameter names (e.g. `def fibonacci(n: int)` instead of `def fibonacci(arg0: int)`) and include `///` doc comments as docstrings. Without `withSource`, docstrings come from the `name__doc__` convention and parameters default to `arg0`, `arg1`, etc.
 
 No special configuration is needed — stub generation works the same whether you use explicit registration or `.from`.
 

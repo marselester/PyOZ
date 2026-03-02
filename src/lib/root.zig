@@ -408,6 +408,7 @@ pub const Args = wrappers_mod.Args;
 const from_mod = @import("from.zig");
 pub const source = from_mod.source;
 pub const sub = from_mod.sub;
+pub const withSource = from_mod.withSource;
 pub const Exception = from_mod.Exception;
 pub const ErrorMap = from_mod.ErrorMapType;
 
@@ -950,6 +951,7 @@ fn extractClassInfoWithFrom(
                         .name = from_mod.comptimeStrZ(d.name),
                         .zig_type = ClassType,
                         .parent_zig_type = parent_type,
+                        .source_text = from_mod.resolveSource(entry),
                     };
                     from_idx += 1;
                 }
@@ -1107,13 +1109,21 @@ pub fn module(comptime config: anytype) type {
             for (funcs, 0..) |f, i| {
                 // Check if this is a keyword-argument function using Args(T)
                 const is_named_kwargs = @hasField(@TypeOf(f), "is_named_kwargs") and f.is_named_kwargs;
+                const ml_doc = stubs_mod.buildMlDoc(
+                    std.mem.span(f.name),
+                    @TypeOf(f.func),
+                    .module_func,
+                    is_named_kwargs,
+                    f.doc,
+                    null,
+                );
 
                 if (is_named_kwargs) {
                     m[i] = .{
                         .ml_name = f.name,
                         .ml_meth = @ptrCast(wrapFunctionWithNamedKeywords(f.func, class_infos)),
                         .ml_flags = py.METH_VARARGS | py.METH_KEYWORDS,
-                        .ml_doc = f.doc,
+                        .ml_doc = ml_doc,
                     };
                 } else {
                     // Use error mapping wrapper if mappings are defined
@@ -1122,14 +1132,14 @@ pub fn module(comptime config: anytype) type {
                             .ml_name = f.name,
                             .ml_meth = wrapFunctionWithErrorMapping(f.func, class_infos, all_error_mappings),
                             .ml_flags = py.METH_VARARGS,
-                            .ml_doc = f.doc,
+                            .ml_doc = ml_doc,
                         };
                     } else {
                         m[i] = .{
                             .ml_name = f.name,
                             .ml_meth = wrapFunctionWithClasses(f.func, class_infos),
                             .ml_flags = py.METH_VARARGS,
-                            .ml_doc = f.doc,
+                            .ml_doc = ml_doc,
                         };
                     }
                 }
@@ -1145,15 +1155,25 @@ pub fn module(comptime config: anytype) type {
                 for (decls) |d| {
                     if (from_mod.shouldExportAsFunction(ns, d.name, opts, explicit_names)) {
                         const func_val = @field(ns, d.name);
-                        const doc = from_mod.getDocstring(ns, d.name);
+                        const doc = from_mod.getDocstring(entry, d.name);
                         const FnType = @TypeOf(func_val);
+                        const is_named = from_mod.isNamedKwargsFunc(FnType);
+                        const param_names = from_mod.getParamNames(entry, d.name);
+                        const ml_doc = stubs_mod.buildMlDoc(
+                            d.name,
+                            FnType,
+                            .module_func,
+                            is_named,
+                            doc,
+                            param_names,
+                        );
 
-                        if (from_mod.isNamedKwargsFunc(FnType)) {
+                        if (is_named) {
                             m[from_idx] = .{
                                 .ml_name = from_mod.comptimeStrZ(d.name),
                                 .ml_meth = @ptrCast(wrapFunctionWithNamedKeywords(func_val, class_infos)),
                                 .ml_flags = py.METH_VARARGS | py.METH_KEYWORDS,
-                                .ml_doc = doc,
+                                .ml_doc = ml_doc,
                             };
                         } else {
                             if (all_error_mappings.len > 0) {
@@ -1161,14 +1181,14 @@ pub fn module(comptime config: anytype) type {
                                     .ml_name = from_mod.comptimeStrZ(d.name),
                                     .ml_meth = wrapFunctionWithErrorMapping(func_val, class_infos, all_error_mappings),
                                     .ml_flags = py.METH_VARARGS,
-                                    .ml_doc = doc,
+                                    .ml_doc = ml_doc,
                                 };
                             } else {
                                 m[from_idx] = .{
                                     .ml_name = from_mod.comptimeStrZ(d.name),
                                     .ml_meth = wrapFunctionWithClasses(func_val, class_infos),
                                     .ml_flags = py.METH_VARARGS,
-                                    .ml_doc = doc,
+                                    .ml_doc = ml_doc,
                                 };
                             }
                         }
@@ -1392,6 +1412,13 @@ pub fn module(comptime config: anytype) type {
                                     return -1;
                                 };
 
+                                // Set class tp_doc from source if no explicit __doc__
+                                if (comptime !@hasDecl(ClassType, "__doc__")) {
+                                    if (comptime from_mod.getClassDoc(entry, d.name)) |src_class_doc| {
+                                        from_type_obj.tp_doc = src_class_doc;
+                                    }
+                                }
+
                                 if (!abi.abi3_enabled) {
                                     const from_slots_tuple = class_mod.createSlotsTuple(ClassType);
                                     if (from_slots_tuple) |fst| {
@@ -1540,7 +1567,7 @@ pub fn module(comptime config: anytype) type {
                         };
 
                         // Set submodule docstring from __doc__ if present
-                        const sub_doc_str = comptime from_mod.getNamespaceDoc(sub_ns);
+                        const sub_doc_str = comptime from_mod.getNamespaceDoc(entry);
                         if (sub_doc_str) |sdoc| {
                             const doc_py = py.c.PyUnicode_FromString(sdoc);
                             if (doc_py) |ds| {
@@ -1554,25 +1581,35 @@ pub fn module(comptime config: anytype) type {
                         inline for (sub_decls) |sd| {
                             if (comptime from_mod.shouldExportAsFunction(sub_ns, sd.name, sub_opts, &.{})) {
                                 const sub_func_val = @field(sub_ns, sd.name);
-                                const sub_doc = from_mod.getDocstring(sub_ns, sd.name);
+                                const sub_doc = from_mod.getDocstring(entry, sd.name);
                                 const SubFnType = @TypeOf(sub_func_val);
                                 const sub_func_name = from_mod.comptimeStrZ(sd.name);
+                                const sub_is_named = comptime from_mod.isNamedKwargsFunc(SubFnType);
+                                const sub_param_names = comptime from_mod.getParamNames(entry, sd.name);
+                                const sub_ml_doc = comptime stubs_mod.buildMlDoc(
+                                    sd.name,
+                                    SubFnType,
+                                    .module_func,
+                                    sub_is_named,
+                                    sub_doc,
+                                    sub_param_names,
+                                );
 
                                 // Create a PyCFunction and add via PyModule_AddObject
                                 const sub_meth_def = comptime blk_m: {
-                                    if (from_mod.isNamedKwargsFunc(SubFnType)) {
+                                    if (sub_is_named) {
                                         break :blk_m py.c.PyMethodDef{
                                             .ml_name = sub_func_name,
                                             .ml_meth = @ptrCast(wrapFunctionWithNamedKeywords(sub_func_val, class_infos)),
                                             .ml_flags = py.METH_VARARGS | py.METH_KEYWORDS,
-                                            .ml_doc = sub_doc,
+                                            .ml_doc = sub_ml_doc,
                                         };
                                     } else {
                                         break :blk_m py.c.PyMethodDef{
                                             .ml_name = sub_func_name,
                                             .ml_meth = if (all_error_mappings.len > 0) wrapFunctionWithErrorMapping(sub_func_val, class_infos, all_error_mappings) else wrapFunctionWithClasses(sub_func_val, class_infos),
                                             .ml_flags = py.METH_VARARGS,
-                                            .ml_doc = sub_doc,
+                                            .ml_doc = sub_ml_doc,
                                         };
                                     }
                                 };
@@ -1640,8 +1677,7 @@ pub fn module(comptime config: anytype) type {
         else if (has_from) blk_doc: {
             for (from_entries) |entry| {
                 if (from_mod.isSub(entry)) continue;
-                const ns = from_mod.resolveNamespace(entry);
-                if (from_mod.getNamespaceDoc(ns)) |doc| {
+                if (from_mod.getNamespaceDoc(entry)) |doc| {
                     break :blk_doc doc;
                 }
             }
