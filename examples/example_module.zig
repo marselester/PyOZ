@@ -2979,7 +2979,7 @@ fn setupSubmodules(module: *pyoz.PyObject) callconv(.c) c_int {
     return 0;
 }
 
-const Example = pyoz.module(.{
+pub const Example = pyoz.module(.{
     .name = "example",
     .doc = "Example PyOZ module - Python bindings for Zig made easy!",
     .module_init = &setupSubmodules,
@@ -3246,7 +3246,4 @@ var math_methods = [_]pyoz.PyMethodDef{
     pyoz.methodDefSentinel(),
 };
 
-/// Module initialization function
-pub export fn PyInit_example() ?*pyoz.PyObject {
-    return Example.init();
-}
+

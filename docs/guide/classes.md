@@ -10,7 +10,7 @@ const Point = struct {
     y: f64,
 };
 
-const MyModule = pyoz.module(.{
+pub const MyModule = pyoz.module(.{
     .name = "mymodule",
     .classes = &.{
         pyoz.class("Point", Point),
@@ -528,7 +528,7 @@ const Line = struct {
     }
 };
 
-const MyModule = pyoz.module(.{
+pub const MyModule = pyoz.module(.{
     .name = "geometry",
     .classes = &.{
         pyoz.class("Point", Point),

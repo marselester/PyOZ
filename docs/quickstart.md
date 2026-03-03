@@ -89,11 +89,6 @@ pub const Module = pyoz.module(.{
     },
     .classes = &.{},
 });
-
-// Module initialization function
-pub export fn PyInit_mymodule() ?*pyoz.PyObject {
-    return Module.init();
-}
 ```
 
 ### Step 3: Build the Wheel
@@ -169,10 +164,6 @@ pub const Module = pyoz.module(.{
         pyoz.class("Point", Point),
     },
 });
-
-pub export fn PyInit_mymodule() ?*pyoz.PyObject {
-    return Module.init();
-}
 ```
 
 Use it from Python:
@@ -206,7 +197,7 @@ fn divide(a: f64, b: f64) !f64 {
     return a / b;
 }
 
-const MyModule = pyoz.module(.{
+pub const MyModule = pyoz.module(.{
     .name = "mymodule",
     .funcs = &.{
         pyoz.func("divide", divide, "Divide two numbers"),
@@ -232,7 +223,7 @@ For custom error names, use explicit [error mappings](guide/errors.md#explicit-e
 Add compile-time constants to your module:
 
 ```zig
-const MyModule = pyoz.module(.{
+pub const MyModule = pyoz.module(.{
     .name = "mymodule",
     .funcs = &.{},
     .consts = &.{
@@ -272,7 +263,7 @@ const Status = enum {
     completed,
 };
 
-const MyModule = pyoz.module(.{
+pub const MyModule = pyoz.module(.{
     .name = "mymodule",
     .funcs = &.{},
     // Auto-detects IntEnum vs StrEnum based on tag type

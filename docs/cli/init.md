@@ -59,7 +59,7 @@ Installs as a single `.so` file: `site-packages/myproject.so`
 ```
 myproject/
 ├── src/
-│   └── lib.zig          # Main module source (exports PyInit__myproject)
+│   └── lib.zig          # Main module source
 ├── myproject/
 │   └── __init__.py      # Re-exports from native extension
 ├── build.zig

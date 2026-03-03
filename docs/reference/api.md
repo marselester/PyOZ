@@ -9,7 +9,7 @@ Quick reference for PyOZ's public API.
 Define a Python module.
 
 ```zig
-const MyModule = pyoz.module(.{
+pub const MyModule = pyoz.module(.{
     .name = "mymodule",           // Required: module name
     .doc = "Description",          // Optional: docstring
     .from = &.{ ... },            // Optional: auto-scan namespaces
@@ -31,7 +31,7 @@ Auto-scan Zig namespaces to register all Python-compatible public declarations.
 ```zig
 const math = @import("math.zig");
 
-const MyModule = pyoz.module(.{
+pub const MyModule = pyoz.module(.{
     .name = "mymodule",
     .from = &.{ math },
 });

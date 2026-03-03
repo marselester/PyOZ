@@ -125,7 +125,7 @@ pub const VERSION: []const u8 = "1.0.0";
 
 ```zig
 // root
-const Example = pyoz.module(.{
+pub const Example = pyoz.module(.{
     .name = "example",
     .from = &.{ @import("types.zig") },
 });

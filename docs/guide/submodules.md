@@ -14,15 +14,11 @@ fn setupSubmodules(module: *pyoz.PyObject) callconv(.c) c_int {
     return 0;
 }
 
-const MyModule = pyoz.module(.{
+pub const MyModule = pyoz.module(.{
     .name = "mymodule",
     .module_init = &setupSubmodules,
     // ...
 });
-
-pub export fn PyInit_mymodule() ?*pyoz.PyObject {
-    return MyModule.init();
-}
 ```
 
 ## Defining Submodule Methods
@@ -94,15 +90,11 @@ fn setupSubmodules(module: *pyoz.PyObject) callconv(.c) c_int {
     return 0;
 }
 
-const MyLib = pyoz.module(.{
+pub const MyLib = pyoz.module(.{
     .name = "mylib",
     .module_init = &setupSubmodules,
     .funcs = &.{ pyoz.func("version", version, "Get version") },
 });
-
-pub export fn PyInit_mylib() ?*pyoz.PyObject {
-    return MyLib.init();
-}
 ```
 
 ## Auto-Scan Alternative
@@ -113,7 +105,7 @@ If you're using the `.from` API, you can create submodules declaratively with `p
 const string_utils = @import("string_utils.zig");
 const io_utils = @import("io_utils.zig");
 
-const Example = pyoz.module(.{
+pub const Example = pyoz.module(.{
     .name = "example",
     .from = &.{
         math,

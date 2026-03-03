@@ -361,10 +361,6 @@ pub const Module = pyoz.module(.{
         ),
     },
 });
-
-pub export fn PyInit_mymodule() ?*pyoz.PyObject {
-    return Module.init();
-}
 ```
 
 ## API Reference

@@ -1774,7 +1774,7 @@ pub fn module(comptime config: anytype) type {
 
         /// Initialize the module using multi-phase initialization (PEP 489).
         /// Returns a module def object; Python calls moduleExec to populate it.
-        pub fn init() ?*PyObject {
+        pub fn init() callconv(.c) ?*PyObject {
             return py.PyModuleDef_Init(&module_def);
         }
 
@@ -1935,6 +1935,13 @@ pub fn module(comptime config: anytype) type {
 
         comptime {
             @export(&__pyoz_bench_section__, .{ .name = "__pyoz_bench_section__" });
+        }
+
+        // Auto-export PyInit_ function so users don't need manual boilerplate.
+        // The build system generates a bridge file that forces analysis of this type.
+        comptime {
+            const mod_name: [*:0]const u8 = config.name;
+            @export(&init, .{ .name = "PyInit_" ++ std.mem.span(mod_name) });
         }
     };
 }

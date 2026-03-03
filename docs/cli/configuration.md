@@ -109,7 +109,7 @@ The module name must match in three places:
 | File | Setting |
 |------|---------|
 | `build.zig` | `.name = "myproject"` |
-| `src/lib.zig` | `.name = "myproject"` and `PyInit_myproject` |
+| `src/lib.zig` | `.name = "myproject"` |
 | `pyproject.toml` | `name = "myproject"` |
 
 ## Version Management

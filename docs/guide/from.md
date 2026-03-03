@@ -7,7 +7,7 @@ The `.from` API auto-scans Zig namespaces and registers all Python-compatible pu
 A typical module definition repeats every name three times:
 
 ```zig
-const Example = pyoz.module(.{
+pub const Example = pyoz.module(.{
     .name = "example",
     .funcs = &.{
         pyoz.func("add", add, "Add two integers"),
@@ -36,7 +36,7 @@ Move your declarations into separate files and let `.from` scan them:
 ```zig
 const pyoz = @import("PyOZ");
 
-const Example = pyoz.module(.{
+pub const Example = pyoz.module(.{
     .name = "example",
     .from = &.{
         pyoz.withSource(@import("math.zig"), @embedFile("math.zig")),
@@ -245,7 +245,7 @@ Create nested module structures with `pyoz.sub()`:
 const string_utils = @import("string_utils.zig");
 const io_utils = @import("io_utils.zig");
 
-const Example = pyoz.module(.{
+pub const Example = pyoz.module(.{
     .name = "example",
     .from = &.{
         math,
@@ -352,7 +352,7 @@ These are merged with any explicit `.tests` / `.benchmarks` in the module config
 ```zig
 const math = @import("math.zig");
 
-const Example = pyoz.module(.{
+pub const Example = pyoz.module(.{
     .name = "example",
     .from = &.{ math },
     .funcs = &.{
@@ -372,7 +372,7 @@ If a name appears in both `.from` and an explicit field, **explicit wins** — t
 ```zig
 const math = @import("math.zig");  // has pub fn add(...)
 
-const Example = pyoz.module(.{
+pub const Example = pyoz.module(.{
     .name = "example",
     .from = &.{ math },
     .funcs = &.{
@@ -400,17 +400,13 @@ pub fn multiply(a: f64, b: f64) f64 { return a * b; }
 
 pub const PI: f64 = 3.14159;
 
-const _module = pyoz.module(.{
+pub const _module = pyoz.module(.{
     .name = "mymath",
     .from = &.{ @This() },
 });
-
-pub export fn PyInit_mymath() ?*pyoz.PyObject {
-    return _module.init();
-}
 ```
 
-The `_module` and `PyInit_mymath` declarations are skipped automatically (`_` prefix and `export fn`).
+The `_module` declaration is skipped automatically by `.from` scanning (`_` prefix).
 
 ## Stub Generation
 
@@ -472,17 +468,13 @@ pub const Color = enum(i32) { Red = 1, Green = 2, Blue = 3 };
 // root.zig
 const pyoz = @import("PyOZ");
 
-const Example = pyoz.module(.{
+pub const Example = pyoz.module(.{
     .name = "example",
     .from = &.{
         pyoz.withSource(@import("math.zig"), @embedFile("math.zig")),
         pyoz.withSource(@import("types.zig"), @embedFile("types.zig")),
     },
 });
-
-pub export fn PyInit_example() ?*pyoz.PyObject {
-    return Example.init();
-}
 ```
 
 In Python:

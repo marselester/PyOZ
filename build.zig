@@ -144,15 +144,32 @@ pub fn build(b: *std.Build) void {
     // Example Python Extension Module
     // ========================================================================
 
+    const example_user_mod = b.createModule(.{
+        .root_source_file = b.path("examples/example_module.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "PyOZ", .module = pyoz_mod },
+        },
+    });
+    const example_bridge_wf = b.addWriteFiles();
+    const example_bridge_source = example_bridge_wf.add("_pyoz_bridge.zig",
+        \\const _mod = @import("_pyoz_mod");
+        \\comptime {
+        \\    for (@typeInfo(_mod).@"struct".decls) |decl| {
+        \\        _ = @field(_mod, decl.name);
+        \\    }
+        \\}
+    );
     const example_lib = b.addLibrary(.{
         .name = "example",
         .linkage = .dynamic,
         .root_module = b.createModule(.{
-            .root_source_file = b.path("examples/example_module.zig"),
+            .root_source_file = example_bridge_source,
             .target = target,
             .optimize = optimize,
             .imports = &.{
-                .{ .name = "PyOZ", .module = pyoz_mod },
+                .{ .name = "_pyoz_mod", .module = example_user_mod },
             },
         }),
     });
@@ -164,8 +181,7 @@ pub fn build(b: *std.Build) void {
 
     // Link against Python
     if (python_config) |python| {
-        example_lib.addIncludePath(.{ .cwd_relative = python.include_dir });
-        example_lib.root_module.addIncludePath(.{ .cwd_relative = python.include_dir });
+        example_user_mod.addIncludePath(.{ .cwd_relative = python.include_dir });
         if (python.lib_dir) |lib_dir| {
             example_lib.addLibraryPath(.{ .cwd_relative = lib_dir });
         }
@@ -186,15 +202,32 @@ pub fn build(b: *std.Build) void {
     // ABI3 Example Python Extension Module
     // ========================================================================
 
+    const example_abi3_user_mod = b.createModule(.{
+        .root_source_file = b.path("examples/example_abi3.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "PyOZ", .module = pyoz_mod },
+        },
+    });
+    const example_abi3_bridge_wf = b.addWriteFiles();
+    const example_abi3_bridge_source = example_abi3_bridge_wf.add("_pyoz_bridge.zig",
+        \\const _mod = @import("_pyoz_mod");
+        \\comptime {
+        \\    for (@typeInfo(_mod).@"struct".decls) |decl| {
+        \\        _ = @field(_mod, decl.name);
+        \\    }
+        \\}
+    );
     const example_abi3_lib = b.addLibrary(.{
         .name = "example_abi3",
         .linkage = .dynamic,
         .root_module = b.createModule(.{
-            .root_source_file = b.path("examples/example_abi3.zig"),
+            .root_source_file = example_abi3_bridge_source,
             .target = target,
             .optimize = optimize,
             .imports = &.{
-                .{ .name = "PyOZ", .module = pyoz_mod },
+                .{ .name = "_pyoz_mod", .module = example_abi3_user_mod },
             },
         }),
     });
@@ -206,8 +239,7 @@ pub fn build(b: *std.Build) void {
 
     // Link against Python
     if (python_config) |python| {
-        example_abi3_lib.addIncludePath(.{ .cwd_relative = python.include_dir });
-        example_abi3_lib.root_module.addIncludePath(.{ .cwd_relative = python.include_dir });
+        example_abi3_user_mod.addIncludePath(.{ .cwd_relative = python.include_dir });
         if (python.lib_dir) |lib_dir| {
             example_abi3_lib.addLibraryPath(.{ .cwd_relative = lib_dir });
         }

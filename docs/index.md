@@ -77,16 +77,12 @@ fn add(a: i64, b: i64) i64 {
     return a + b;
 }
 
-const MyModule = pyoz.module(.{
+pub const MyModule = pyoz.module(.{
     .name = "mymodule",
     .funcs = &.{
         pyoz.func("add", add, "Add two numbers"),
     },
 });
-
-pub export fn PyInit_mymodule() ?*pyoz.PyObject {
-    return MyModule.init();
-}
 ```
 
 ```python

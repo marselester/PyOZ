@@ -140,7 +140,7 @@ pub const add__doc__ = "Add two integers";
 
 ```zig
 // root
-const Example = pyoz.module(.{
+pub const Example = pyoz.module(.{
     .name = "example",
     .from = &.{ @import("math.zig") },
 });

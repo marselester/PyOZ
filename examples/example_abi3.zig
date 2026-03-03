@@ -1742,7 +1742,7 @@ const MathError = pyoz.exception("MathError", .{ .base = .RuntimeError, .doc = "
 // Module definition
 // ============================================================================
 
-const Abi3Example = pyoz.module(.{
+pub const Abi3Example = pyoz.module(.{
     .name = "example_abi3",
     .doc = "ABI3-compatible example module demonstrating Stable ABI features",
     .funcs = &.{
@@ -1907,6 +1907,4 @@ const Abi3Example = pyoz.module(.{
     },
 });
 
-pub export fn PyInit_example_abi3() ?*pyoz.PyObject {
-    return Abi3Example.init();
-}
+
