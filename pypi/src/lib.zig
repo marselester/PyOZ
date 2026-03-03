@@ -7,34 +7,52 @@ const builder = @import("builder.zig");
 const commands = @import("commands.zig");
 const wheel = @import("wheel.zig");
 
-fn init_project(name: ?[]const u8, in_current_dir: ?bool, local_pyoz_path: ?[]const u8, package_layout: ?bool) !void {
-    try project.create(std.heap.page_allocator, name, in_current_dir orelse false, local_pyoz_path, package_layout orelse false);
+const InitArgs = pyoz.Args(struct {
+    name: ?[]const u8 = null,
+    in_current_dir: ?bool = null,
+    local_pyoz_path: ?[]const u8 = null,
+    package_layout: ?bool = null,
+});
+
+fn init_project(args: InitArgs) !void {
+    try project.create(std.heap.page_allocator, args.value.name, args.value.in_current_dir orelse false, args.value.local_pyoz_path, args.value.package_layout orelse false);
 }
 
-fn build_wheel(release: ?bool, stubs: ?bool) ![]const u8 {
-    // Use page_allocator: the wheel path string must outlive this function
-    // because PyOZ's wrapper calls toPy() on the returned slice after we return.
-    // Internal allocations from buildWheel are leaked but they're small and one-shot.
+const BuildArgs = pyoz.Args(struct {
+    release: ?bool = null,
+    stubs: ?bool = null,
+});
+
+fn build_wheel(args: BuildArgs) ![]const u8 {
     const alloc = std.heap.page_allocator;
-    return try wheel.buildWheel(alloc, release orelse false, stubs orelse true);
+    return try wheel.buildWheel(alloc, args.value.release orelse false, args.value.stubs orelse true);
 }
 
 fn develop_mode() !void {
     try builder.developMode(std.heap.page_allocator);
 }
 
-fn publish_wheels(test_pypi: ?bool) !void {
-    try wheel.publish(std.heap.page_allocator, test_pypi orelse false);
+const PublishArgs = pyoz.Args(struct {
+    test_pypi: ?bool = null,
+});
+
+fn publish_wheels(args: PublishArgs) !void {
+    try wheel.publish(std.heap.page_allocator, args.value.test_pypi orelse false);
 }
 
-fn run_tests(release: ?bool, verbose: ?bool) !void {
+const TestArgs = pyoz.Args(struct {
+    release: ?bool = null,
+    verbose: ?bool = null,
+});
+
+fn run_tests(args: TestArgs) !void {
     var args_buf: [2][]const u8 = undefined;
     var args_len: usize = 0;
-    if (release orelse false) {
+    if (args.value.release orelse false) {
         args_buf[args_len] = "--release";
         args_len += 1;
     }
-    if (verbose orelse false) {
+    if (args.value.verbose orelse false) {
         args_buf[args_len] = "--verbose";
         args_len += 1;
     }
@@ -42,15 +60,15 @@ fn run_tests(release: ?bool, verbose: ?bool) !void {
 }
 
 fn run_bench() !void {
-    const args = [_][]const u8{};
-    try commands.runBench(std.heap.page_allocator, &args);
+    const bench_args = [_][]const u8{};
+    try commands.runBench(std.heap.page_allocator, &bench_args);
 }
 
 fn get_version() []const u8 {
     return version.string;
 }
 
-const PyOZCli = pyoz.module(.{
+pub const PyOZCli = pyoz.module(.{
     .name = "_pyoz",
     .doc = "PyOZ native CLI library - build Python extensions in Zig",
     .classes = &.{},
@@ -67,7 +85,3 @@ const PyOZCli = pyoz.module(.{
         pyoz.constant("__version__", version.string),
     },
 });
-
-pub export fn PyInit__pyoz() ?*pyoz.PyObject {
-    return PyOZCli.init();
-}

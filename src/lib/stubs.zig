@@ -372,7 +372,7 @@ pub fn buildMlDoc(
 
             if (params.len >= 1) {
                 const ArgsWrapperType = params[0].type.?;
-                if (@hasDecl(ArgsWrapperType, "ArgsStruct")) {
+                if (@typeInfo(ArgsWrapperType) == .@"struct" and @hasDecl(ArgsWrapperType, "ArgsStruct")) {
                     const ArgsStructType = ArgsWrapperType.ArgsStruct;
                     const args_fields = @typeInfo(ArgsStructType).@"struct".fields;
 
@@ -633,7 +633,7 @@ pub fn generateFunctionStub(
         if (is_named_kwargs and params.len == 1) {
             // Named kwargs - expand the Args struct
             const ArgsWrapperType = params[0].type.?;
-            if (@hasDecl(ArgsWrapperType, "ArgsStruct")) {
+            if (@typeInfo(ArgsWrapperType) == .@"struct" and @hasDecl(ArgsWrapperType, "ArgsStruct")) {
                 const ArgsStructType = ArgsWrapperType.ArgsStruct;
                 const args_fields = @typeInfo(ArgsStructType).@"struct".fields;
 
