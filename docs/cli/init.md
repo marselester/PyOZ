@@ -59,7 +59,7 @@ Installs as a single `.so` file: `site-packages/myproject.so`
 ```
 myproject/
 ├── src/
-│   └── lib.zig          # Main module source (exports PyInit__myproject)
+│   └── lib.zig          # Main module source
 ├── myproject/
 │   └── __init__.py      # Re-exports from native extension
 ├── build.zig
@@ -67,9 +67,17 @@ myproject/
 └── pyproject.toml       # module-name = "_myproject", py-packages = ["myproject"]
 ```
 
-Installs as a proper Python package: `site-packages/myproject/__init__.py` + `_myproject.so`
+Installs as a proper Python package:
+
+```
+site-packages/myproject/
+├── __init__.py
+└── _myproject.so
+```
 
 The `--package` flag is recommended for non-trivial projects because it lets you combine the native extension with pure Python code in the same importable package. The native module is automatically prefixed with an underscore (`_myproject`) to avoid name collisions with the package directory, and `__init__.py` re-exports all native symbols.
+
+Projects using Python [src-layout](https://packaging.python.org/en/latest/discussions/src-layout-vs-flat-layout/) (where the package directory is under `src/`) are also supported — see [Configuration](configuration.md#python-src-layout) for details.
 
 The generated `src/lib.zig` contains a minimal working module with an example `add` function. Edit this file to add your functions and classes.
 

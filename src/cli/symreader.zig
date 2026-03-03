@@ -305,6 +305,191 @@ fn extractNamedSectionMachO(allocator: std.mem.Allocator, file: std.fs.File, sec
     return null;
 }
 
+/// Check if a compiled module exports a specific symbol (e.g., "PyInit__liburing").
+/// Used to validate that the module's export function matches the expected name.
+pub fn hasExportSymbol(allocator: std.mem.Allocator, module_path: []const u8, symbol_name: []const u8) bool {
+    const file = std.fs.cwd().openFile(module_path, .{}) catch return false;
+    defer file.close();
+
+    var magic: [4]u8 = undefined;
+    _ = file.read(&magic) catch return false;
+    file.seekTo(0) catch return false;
+
+    // ELF
+    if (magic[0] == 0x7F and magic[1] == 'E' and magic[2] == 'L' and magic[3] == 'F') {
+        return elfHasSymbol(allocator, file, symbol_name);
+    }
+
+    // PE
+    if (magic[0] == 'M' and magic[1] == 'Z') {
+        return peHasSymbol(allocator, file, symbol_name);
+    }
+
+    // Mach-O — assume valid if we can't parse (symbol tables are complex)
+    return true;
+}
+
+/// Check if an ELF file exports a specific symbol via .dynsym
+fn elfHasSymbol(allocator: std.mem.Allocator, file: std.fs.File, symbol_name: []const u8) bool {
+    const elf = std.elf;
+
+    var ehdr: elf.Elf64_Ehdr = undefined;
+    const bytes_read = file.read(std.mem.asBytes(&ehdr)) catch return false;
+    if (bytes_read != @sizeOf(elf.Elf64_Ehdr)) return false;
+    if (ehdr.e_ident[elf.EI_CLASS] != elf.ELFCLASS64) return false;
+
+    // Read section header string table
+    const shstrtab_offset = ehdr.e_shoff + @as(u64, ehdr.e_shstrndx) * @as(u64, ehdr.e_shentsize);
+    file.seekTo(shstrtab_offset) catch return false;
+
+    var shstrtab_shdr: elf.Elf64_Shdr = undefined;
+    _ = file.read(std.mem.asBytes(&shstrtab_shdr)) catch return false;
+
+    const shstrtab = allocator.alloc(u8, shstrtab_shdr.sh_size) catch return false;
+    defer allocator.free(shstrtab);
+    file.seekTo(shstrtab_shdr.sh_offset) catch return false;
+    _ = file.read(shstrtab) catch return false;
+
+    // Find .dynsym and .dynstr (dynamic symbols survive stripping)
+    var dynsym_shdr: ?elf.Elf64_Shdr = null;
+    var dynstr_shdr: ?elf.Elf64_Shdr = null;
+    var symtab_shdr: ?elf.Elf64_Shdr = null;
+    var strtab_shdr: ?elf.Elf64_Shdr = null;
+
+    var i: u16 = 0;
+    while (i < ehdr.e_shnum) : (i += 1) {
+        const shdr_offset = ehdr.e_shoff + @as(u64, i) * @as(u64, ehdr.e_shentsize);
+        file.seekTo(shdr_offset) catch continue;
+
+        var shdr: elf.Elf64_Shdr = undefined;
+        _ = file.read(std.mem.asBytes(&shdr)) catch continue;
+
+        const name = std.mem.sliceTo(shstrtab[shdr.sh_name..], 0);
+        if (std.mem.eql(u8, name, ".dynsym")) dynsym_shdr = shdr;
+        if (std.mem.eql(u8, name, ".dynstr")) dynstr_shdr = shdr;
+        if (std.mem.eql(u8, name, ".symtab")) symtab_shdr = shdr;
+        if (std.mem.eql(u8, name, ".strtab")) strtab_shdr = shdr;
+    }
+
+    // Check .dynsym first (always present in shared libraries)
+    if (dynsym_shdr != null and dynstr_shdr != null) {
+        if (elfSymtabContains(allocator, file, dynsym_shdr.?, dynstr_shdr.?, symbol_name)) return true;
+    }
+    // Fall back to .symtab (non-stripped)
+    if (symtab_shdr != null and strtab_shdr != null) {
+        if (elfSymtabContains(allocator, file, symtab_shdr.?, strtab_shdr.?, symbol_name)) return true;
+    }
+
+    return false;
+}
+
+/// Check if an ELF symbol table contains a specific symbol name
+fn elfSymtabContains(allocator: std.mem.Allocator, file: std.fs.File, symtab: std.elf.Elf64_Shdr, strtab: std.elf.Elf64_Shdr, symbol_name: []const u8) bool {
+    const strtab_data = allocator.alloc(u8, strtab.sh_size) catch return false;
+    defer allocator.free(strtab_data);
+    file.seekTo(strtab.sh_offset) catch return false;
+    _ = file.read(strtab_data) catch return false;
+
+    const sym_count = symtab.sh_size / @sizeOf(std.elf.Elf64_Sym);
+    var j: u64 = 0;
+    while (j < sym_count) : (j += 1) {
+        const sym_offset = symtab.sh_offset + j * @sizeOf(std.elf.Elf64_Sym);
+        file.seekTo(sym_offset) catch continue;
+
+        var sym: std.elf.Elf64_Sym = undefined;
+        _ = file.read(std.mem.asBytes(&sym)) catch continue;
+
+        if (sym.st_name >= strtab_data.len) continue;
+        const sym_name = std.mem.sliceTo(strtab_data[sym.st_name..], 0);
+        if (std.mem.eql(u8, sym_name, symbol_name)) return true;
+    }
+    return false;
+}
+
+/// Check if a PE file exports a specific symbol
+fn peHasSymbol(allocator: std.mem.Allocator, file: std.fs.File, symbol_name: []const u8) bool {
+    _ = allocator;
+
+    // Read DOS header
+    var dos_header: [64]u8 = undefined;
+    _ = file.read(&dos_header) catch return false;
+    const pe_offset = std.mem.readInt(u32, dos_header[0x3C..0x40], .little);
+    file.seekTo(pe_offset) catch return false;
+
+    // Verify PE signature
+    var pe_sig: [4]u8 = undefined;
+    _ = file.read(&pe_sig) catch return false;
+    if (!std.mem.eql(u8, &pe_sig, "PE\x00\x00")) return false;
+
+    // Read COFF header
+    var coff_header: [20]u8 = undefined;
+    _ = file.read(&coff_header) catch return false;
+    const optional_header_size = std.mem.readInt(u16, coff_header[16..18], .little);
+
+    // Read optional header to get export directory RVA
+    if (optional_header_size < 112) return false;
+    var opt_header_buf: [256]u8 = undefined;
+    const read_size = @min(optional_header_size, 256);
+    _ = file.read(opt_header_buf[0..read_size]) catch return false;
+
+    // PE32+ magic check
+    const pe_magic = std.mem.readInt(u16, opt_header_buf[0..2], .little);
+    if (pe_magic != 0x020B) return false; // Not PE32+
+
+    // Export directory RVA is at offset 112 in PE32+ optional header
+    if (read_size < 120) return false;
+    const export_rva = std.mem.readInt(u32, opt_header_buf[112..116], .little);
+    const export_size = std.mem.readInt(u32, opt_header_buf[116..120], .little);
+    if (export_rva == 0 or export_size == 0) return false;
+
+    // Read section headers to find the section containing the export directory
+    const num_sections = std.mem.readInt(u16, coff_header[2..4], .little);
+    var s: u16 = 0;
+    while (s < num_sections) : (s += 1) {
+        var section_header: [40]u8 = undefined;
+        _ = file.read(&section_header) catch return false;
+
+        const va = std.mem.readInt(u32, section_header[12..16], .little);
+        const raw_size = std.mem.readInt(u32, section_header[16..20], .little);
+        const raw_offset = std.mem.readInt(u32, section_header[20..24], .little);
+        const vsize = std.mem.readInt(u32, section_header[8..12], .little);
+
+        if (export_rva >= va and export_rva < va + @max(vsize, raw_size)) {
+            // Found the section containing exports
+            const export_file_offset = raw_offset + (export_rva - va);
+            file.seekTo(export_file_offset) catch return false;
+
+            var export_dir: [40]u8 = undefined;
+            _ = file.read(&export_dir) catch return false;
+
+            const num_names = std.mem.readInt(u32, export_dir[24..28], .little);
+            const names_rva = std.mem.readInt(u32, export_dir[32..36], .little);
+            const names_file_offset = raw_offset + (names_rva - va);
+
+            // Read name pointer array
+            var n: u32 = 0;
+            while (n < num_names) : (n += 1) {
+                file.seekTo(names_file_offset + n * 4) catch return false;
+                var name_rva_buf: [4]u8 = undefined;
+                _ = file.read(&name_rva_buf) catch return false;
+                const name_rva = std.mem.readInt(u32, &name_rva_buf, .little);
+
+                const name_file_offset = raw_offset + (name_rva - va);
+                file.seekTo(name_file_offset) catch continue;
+
+                var name_buf: [256]u8 = undefined;
+                const name_bytes_read = file.read(&name_buf) catch continue;
+                if (name_bytes_read == 0) continue;
+
+                const name = std.mem.sliceTo(name_buf[0..name_bytes_read], 0);
+                if (std.mem.eql(u8, name, symbol_name)) return true;
+            }
+            return false;
+        }
+    }
+    return false;
+}
+
 /// Read test data directly from a compiled module file
 pub fn extractTests(allocator: std.mem.Allocator, module_path: []const u8) !?[]const u8 {
     return extractNamedSection(allocator, module_path, ".pyoztest", "__pyoztest", "PYOZTEST");

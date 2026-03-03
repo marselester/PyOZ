@@ -326,7 +326,29 @@ Every magic method supports `!T` and `?T` returns:
 4. **Always clean up caught exceptions** - Call `.deinit()` in a defer
 5. **Re-raise unknown exceptions** - Don't silently swallow unexpected errors
 
+## Exceptions and Error Maps in `.from` Namespaces
+
+When using the [`.from` auto-scan API](from.md), you can define exceptions and error mappings inside your scanned namespaces using marker types:
+
+```zig
+const pyoz = @import("PyOZ");
+
+// Exception markers — auto-detected and registered
+pub const ValidationError = pyoz.Exception(.ValueError, "Raised when validation fails");
+pub const NotFoundError = pyoz.Exception(.KeyError, null);
+
+// Error mapping marker — merged with explicit .error_mappings
+pub const __errors__ = pyoz.ErrorMap(.{
+    .{ "InvalidInput", .ValueError },
+    .{ "NotFound", .KeyError },
+    .{ "TooBig", .ValueError, "Value exceeds limit" },
+});
+```
+
+See [Auto-Scan (.from)](from.md) for the full guide.
+
 ## Next Steps
 
+- [Auto-Scan (.from)](from.md) - Zero-boilerplate module definitions
 - [Enums and Constants](enums.md) - Enums and module constants
 - [Types](types.md) - Type conversion reference

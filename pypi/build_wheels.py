@@ -325,10 +325,10 @@ def build_wheel(extension_path, ext, platform_tag, version, dist_dir):
         with open(backend_path, "rb") as f:
             whl.writestr("pyoz/backend.py", f.read())
 
-        # Add the native extension module
+        # Add the native extension module inside the pyoz/ package
         with open(extension_path, "rb") as f:
             ext_data = f.read()
-        ext_target = f"_pyoz{ext}"
+        ext_target = f"pyoz/_pyoz{ext}"
         info = zipfile.ZipInfo(ext_target)
         info.external_attr = 0o755 << 16
         info.compress_type = zipfile.ZIP_DEFLATED
@@ -371,7 +371,7 @@ pyoz = pyoz:main
         whl.writestr(f"{dist_info}/entry_points.txt", entry_points)
 
         # top_level.txt
-        whl.writestr(f"{dist_info}/top_level.txt", "pyoz\n_pyoz\n")
+        whl.writestr(f"{dist_info}/top_level.txt", "pyoz\n")
 
         # RECORD (must be last, lists all files with hashes)
         record_lines = []

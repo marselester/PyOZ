@@ -136,19 +136,43 @@ pub fn build(b: *std.Build) void {
         _ = wf.addCopyFile(cli_path.path(b, name), name);
     }
 
+    // Create the user lib module (lib.zig + CLI files)
+    const user_lib_mod = b.createModule(.{
+        .root_source_file = wf.getDirectory().path(b, "lib.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "PyOZ", .module = pyoz_mod },
+            .{ .name = "version", .module = version_mod },
+        },
+    });
+
+    // Generate a bridge module that forces analysis of all pub decls in the
+    // user's code. This triggers @export inside pyoz.module() so the PyInit_
+    // function is automatically created — no manual boilerplate needed.
+    const bridge_wf = b.addWriteFiles();
+    const bridge_source = bridge_wf.add("_pyoz_bridge.zig",
+        \\const _mod = @import("_pyoz_mod");
+        \\comptime {
+        \\    for (@typeInfo(_mod).@"struct".decls) |decl| {
+        \\        _ = @field(_mod, decl.name);
+        \\    }
+        \\}
+    );
+    const bridge_mod = b.createModule(.{
+        .root_source_file = bridge_source,
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "_pyoz_mod", .module = user_lib_mod },
+        },
+    });
+
     // Build the shared library
     const lib = b.addLibrary(.{
         .name = "_pyoz",
         .linkage = .dynamic,
-        .root_module = b.createModule(.{
-            .root_source_file = wf.getDirectory().path(b, "lib.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "PyOZ", .module = pyoz_mod },
-                .{ .name = "version", .module = version_mod },
-            },
-        }),
+        .root_module = bridge_mod,
     });
 
     // Add miniz C source (needed by zip.zig which is imported by wheel.zig)
@@ -157,6 +181,7 @@ pub fn build(b: *std.Build) void {
         .flags = &.{"-DMINIZ_NO_STDIO"},
     });
     lib.addIncludePath(b.path("../src/miniz"));
+    user_lib_mod.addIncludePath(b.path("../src/miniz"));
 
     // Link Python headers (needed for compilation).
     // On Linux/macOS, do NOT link against libpython — the symbols are provided
@@ -168,7 +193,7 @@ pub fn build(b: *std.Build) void {
         // Cross-compilation: use downloaded CPython headers.
         // build_wheels.py stages the correct pyconfig.h into this directory.
         lib.addIncludePath(.{ .cwd_relative = headers_dir });
-        lib.root_module.addIncludePath(.{ .cwd_relative = headers_dir });
+        user_lib_mod.addIncludePath(.{ .cwd_relative = headers_dir });
 
         if (target_os == .windows) {
             // Generate python3.lib import library from python3.def using zig dlltool.
@@ -193,7 +218,7 @@ pub fn build(b: *std.Build) void {
     } else if (python_config) |python| {
         // Native build: use host Python's headers
         lib.addIncludePath(.{ .cwd_relative = python.include_dir });
-        lib.root_module.addIncludePath(.{ .cwd_relative = python.include_dir });
+        user_lib_mod.addIncludePath(.{ .cwd_relative = python.include_dir });
         if (target_os == .windows) {
             if (python.lib_dir) |lib_dir| {
                 lib.addLibraryPath(.{ .cwd_relative = lib_dir });

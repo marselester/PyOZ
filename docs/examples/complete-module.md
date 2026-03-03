@@ -131,7 +131,7 @@ const Status = enum {
 // Module Definition
 // ============================================================================
 
-const MyModule = pyoz.module(.{
+pub const MyModule = pyoz.module(.{
     .name = "mymodule",
     .doc = "A complete example PyOZ module",
     .funcs = &.{
@@ -200,10 +200,6 @@ const MyModule = pyoz.module(.{
         ),
     },
 });
-
-pub export fn PyInit_mymodule() ?*pyoz.PyObject {
-    return MyModule.init();
-}
 ```
 
 ## Usage in Python

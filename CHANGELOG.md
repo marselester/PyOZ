@@ -5,6 +5,55 @@ All notable changes to PyOZ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0] - 2026-03-01
+
+### Added
+- **Automatic `PyInit_` export — zero boilerplate module initialization** — `pyoz.module()` now auto-exports the `PyInit_<name>` function via `@export` in a comptime block. The build system generates a bridge module that forces Zig's lazy analysis, so the user only needs `pub const Module = pyoz.module(.{ .name = "mymod", ... });` — no manual `pub export fn PyInit_mymod` needed. Works with both standard and `--package` layouts. The module const must be `pub`. Existing projects with manual `PyInit_` exports should remove them to avoid duplicate symbol errors.
+- **`.from` auto-scan API** — New module config field `.from = &.{ @import("my_funcs.zig") }` that auto-discovers and registers public declarations from Zig namespaces. Eliminates repetitive `pyoz.func()`/`pyoz.class()`/`pyoz.constant()` boilerplate when the Python name matches the Zig identifier. Supports functions, classes, enums, constants, and exceptions. Docstrings are provided via `{name}__doc__` convention, or automatically extracted from `///` doc comments when using `pyoz.withSource()`. Works with `pyoz.source()` for filtering (`.only`/`.exclude`) and `pyoz.sub()` for submodules.
+- **`pyoz.source(namespace, .{ .only = &.{"a", "b"} })` / `.exclude`** — Filter which declarations from a `.from` namespace are exported. Use `.only` to whitelist or `.exclude` to blacklist specific names.
+- **`pyoz.sub("name", namespace)` submodule support** — Declare submodules from `.from` namespaces. Functions, constants, classes, and enums in the submodule namespace are registered under `module.name`.
+- **`pyoz.Exception(base, doc)` and `pyoz.ErrorMap()` markers** — Declare custom exceptions and error-to-exception mappings inside `.from` namespaces.
+- **`.from` auto-detects `pyoz.Args(T)` for keyword arguments** — Functions using `pyoz.Args(T)` in `.from` namespaces are automatically wrapped with named kwargs support, identical to explicit `kwfunc` registration.
+- **`.from` deduplication** — Explicit config entries (`.funcs`, `.classes`, etc.) always take priority over `.from`-scanned declarations with the same name. Duplicate names across multiple `.from` entries produce a compile error with guidance to use `pyoz.source()` filtering.
+- **`.from` stub generation** — `.pyi` stubs are automatically generated for all `.from`-scanned declarations, including functions, classes, enums, and constants.
+- **`__text_signature__` support for `help()` and `inspect.signature()`** — All functions (module-level and class methods) now embed a CPython Argument Clinic-style signature in `ml_doc`. `help(func)` shows proper parameter names instead of `add(...)`. Keyword argument functions using `pyoz.Args(T)` show field names and defaults (e.g. `safe_sqrt(value, default=None)`). Class methods correctly use `self`/`$type` conventions. When `withSource` is used for a `.from` namespace, real Zig parameter names are used (e.g. `count_words(s, /)` instead of `count_words(arg0, /)`); without source, positional args fall back to `arg0`/`arg1`.
+- **`pyoz.withSource(@import("f.zig"), @embedFile("f.zig"))` — comptime source introspection** — New wrapper for `.from` entries that enables automatic extraction of `///` doc comments as Python docstrings, `//!` module-level doc comments as `module.__doc__`, real function parameter names for `__text_signature__` and `.pyi` stubs, and `///` comments above structs as class `__doc__`. No boilerplate needed in the `.from` file — just wrap the `@import` at the module config site. Uses `std.zig.Tokenizer` at comptime — source text is NOT embedded in the final binary. Explicit `{name}__doc__` and `{name}__params__` constants still take priority for backward compatibility. A legacy per-file `__source__` function/constant is also supported.
+
+### ⚠️ Breaking Changes — Migration from 0.11.x
+
+🔧 **`build.zig` must be updated.** The build system now uses a bridge module pattern to auto-export `PyInit_`. Projects created with `pyoz init` on 0.11.x need their `build.zig` replaced. The easiest way is to re-run `pyoz init --path` in your project directory (backs up existing files), or manually update `build.zig` to match the new template — see the [generated build.zig](https://github.com/pyozig/PyOZ/blob/dev/src/cli/project.zig) for the current template.
+
+🗑️ **Remove manual `PyInit_` exports.** If your `lib.zig` contains `pub export fn PyInit_mymod`, delete it. The auto-export now handles this. Keeping it causes a `exported symbol collision` compile error.
+
+🔓 **Make the module const `pub`.** Change `const MyMod = pyoz.module(.{...});` to `pub const MyMod = pyoz.module(.{...});`. The bridge module needs to see it to trigger the auto-export.
+
+🔄 **`kwfunc` now requires `pyoz.Args(T)`.** The old `kwfunc` that accepted functions with `?T` optional parameters is removed. Wrap your kwargs in a struct:
+```zig
+// Before (0.11.x)
+fn greet(name: ?[]const u8, times: ?i32) []const u8 { ... }
+pyoz.kwfunc("greet", greet, "Greet someone")
+
+// After (0.12.0)
+fn greet(args: pyoz.Args(struct { name: ?[]const u8 = null, times: ?i32 = null })) []const u8 {
+    const name = args.value.name orelse "World";
+    ...
+}
+pyoz.kwfunc("greet", greet, "Greet someone")
+```
+
+### Changed
+- **`kwfunc` renamed from `kwfunc_named`** — The old `kwfunc` (which generated unusable `arg0`/`arg1` kwarg names due to Zig's `@typeInfo` not exposing parameter names) is removed. `kwfunc_named` is renamed to `kwfunc` and is now the only way to register keyword argument functions. All kwargs functions must use `pyoz.Args(T)` for real parameter names.
+- **Removed broken `?T` kwargs auto-detection** — Functions with optional `?T` parameters are no longer auto-detected as keyword argument functions (in both `.from` and explicit registration). The `?T` detection generated unusable `arg0`/`arg1` names. Use `pyoz.Args(T)` instead for proper named kwargs support.
+
+### Fixed
+- **`.from` enums with unsigned integer tags (`enum(u8)`, `enum(u16)`, etc.) registered as StrEnum instead of IntEnum** — The `isIntEnum` detection in `from.zig` used a flawed heuristic (checking signedness + exhaustiveness) that only recognized signed tags like `enum(i32)`. Unsigned explicit tags like `enum(u8)` fell through and were incorrectly registered as StrEnum, causing `.value` to return string names instead of integer values. Fixed by matching the proven logic from `enums.zig` — checking against standard integer types (`u8`, `u16`, `u32`, `u64`, `i8`, `i16`, `i32`, `i64`, `isize`, `c_int`, `c_long`), which correctly distinguishes user-specified tags from Zig's auto-generated non-standard bit-width tags (`u1`, `u2`, `u3`, ...).
+- **Build-time `PyInit_` symbol validation** — `pyoz build`/`pyoz dev` now validates that the compiled `.so`/`.pyd` exports the expected `PyInit_<module_name>` symbol after building. Catches mismatches between `module-name` in `pyproject.toml` and the Zig export function, printing a clear warning with the exact fix needed. Prevents the confusing `ImportError: dynamic module does not define module export function` at runtime.
+- **Stub `.pyi` filename uses `module-name` instead of project `name`** — When `module-name` differs from the project name (e.g., `module-name = "_liburing"` with `name = "liburing"`), the stub file was incorrectly named `liburing.pyi` instead of `_liburing.pyi`. Now uses `config.getModuleName()` so the stub filename matches the actual `.so`/`.pyd`.
+- **`py-packages` now supports Python src-layout** — `py-packages = ["mypkg"]` now searches `src/mypkg/` first (PEP 517 src-layout) before falling back to `mypkg/` (flat layout). Previously only flat layout was supported, causing `Warning: Python package directory not found` for src-layout projects and missing `__init__.py` in wheels.
+- **Stub generation crash on non-`Args(T)` kwfunc parameters** — `@hasDecl` in `stubs.zig` was called on non-struct types (e.g., `?[]const u8`, `?bool`) when generating stubs for functions with optional parameters, causing a comptime error. Now checks `@typeInfo(...) == .@"struct"` before calling `@hasDecl`.
+- **PyPI wheel: `_pyoz.so` placed inside `pyoz/` package** — The native extension `_pyoz.so` was previously installed at the top level of `site-packages/`, polluting the namespace. Now placed inside `pyoz/_pyoz.so` with a relative import (`from ._pyoz import ...`), keeping the package self-contained.
+- **PyPI `pyoz` CLI updated to `pyoz.Args(T)` for 0.12.0 compatibility** — The `pypi/src/lib.zig` CLI wrapper functions used raw `?T` optional parameters with `kwfunc`, which is no longer supported in 0.12.0. Updated to use `pyoz.Args(T)` structs. Also added bridge module to `pypi/build.zig` for auto-export.
+
 ## [0.11.5] - 2026-02-28
 
 ### Fixed

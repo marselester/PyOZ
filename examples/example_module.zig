@@ -62,21 +62,17 @@ fn safe_divide(a: f64, b: f64) ?f64 {
     return a / b;
 }
 
-/// Function with optional/keyword arguments
-/// In Python: greet_person(name, greeting=None, times=None)
-/// Returns a greeting message. If greeting is None, uses "Hello".
-/// If times is None, uses 1.
-fn greet_person(name: []const u8, greeting: ?[]const u8, times: ?i64) struct { []const u8, []const u8, i64 } {
-    const greet_msg = greeting orelse "Hello";
-    const repeat = times orelse 1;
-    return .{ greet_msg, name, repeat };
+/// Function with keyword arguments using Args(T)
+/// In Python: greet_person(name, greeting="Hello", times=1)
+/// Returns a greeting message.
+fn greet_person(args: pyoz.Args(struct { name: []const u8, greeting: []const u8 = "Hello", times: i64 = 1 })) struct { []const u8, []const u8, i64 } {
+    return .{ args.value.greeting, args.value.name, args.value.times };
 }
 
 /// Another keyword function - calculate with defaults
-/// power(base, exponent=None) - if exponent is None, default to 2 (square)
-fn power(base: f64, exponent: ?f64) f64 {
-    const exp = exponent orelse 2.0;
-    return std.math.pow(f64, base, exp);
+/// power(base, exponent=2.0)
+fn power(args: pyoz.Args(struct { base: f64, exponent: f64 = 2.0 })) f64 {
+    return std.math.pow(f64, args.value.base, args.value.exponent);
 }
 
 /// CPU-intensive computation that releases the GIL
@@ -2983,7 +2979,7 @@ fn setupSubmodules(module: *pyoz.PyObject) callconv(.c) c_int {
     return 0;
 }
 
-const Example = pyoz.module(.{
+pub const Example = pyoz.module(.{
     .name = "example",
     .doc = "Example PyOZ module - Python bindings for Zig made easy!",
     .module_init = &setupSubmodules,
@@ -2994,7 +2990,7 @@ const Example = pyoz.module(.{
         pyoz.func("validate_positive", validate_positive, "Validate that a number is non-negative"),
         pyoz.func("validate_positive_sig", validate_positive_sig, "Validate positive (Signature override)"),
         pyoz.func("safe_divide", safe_divide, "Divide with custom exception on zero"),
-        pyoz.kwfunc("greet_person", greet_person, "Greet a person with optional greeting and times"),
+        pyoz.kwfunc("greet_person", greet_person, "Greet a person with keyword arguments"),
         pyoz.kwfunc("power", power, "Calculate base^exponent (default exponent=2)"),
         pyoz.func("compute_sum_no_gil", compute_sum_no_gil, "Sum of squares (releases GIL)"),
         pyoz.func("compute_sum_with_gil", compute_sum_with_gil, "Sum of squares (keeps GIL)"),
@@ -3079,8 +3075,8 @@ const Example = pyoz.module(.{
         pyoz.func("check_exception_type", check_exception_type, "Check the type of exception a callable raises"),
         pyoz.func("parse_and_validate", parse_and_validate, "Parse and validate a value (demonstrates error mapping)"),
         pyoz.func("lookup_index", lookup_index, "Lookup by index (demonstrates IndexError mapping)"),
-        pyoz.kwfunc_named("greet_named", greet_named, "Greet with named kwargs (name, greeting='Hello', times=1, excited=False)"),
-        pyoz.kwfunc_named("calculate_named", calculate_named, "Calculate with named kwargs (x, y, operation='add')"),
+        pyoz.kwfunc("greet_named", greet_named, "Greet with named kwargs (name, greeting='Hello', times=1, excited=False)"),
+        pyoz.kwfunc("calculate_named", calculate_named, "Calculate with named kwargs (x, y, operation='add')"),
         pyoz.func("greet", greet, "Greet someone"),
         pyoz.func("is_even", is_even, "Check if a number is even"),
         pyoz.func("answer", answer, "Get the answer to everything"),
@@ -3186,6 +3182,12 @@ const Example = pyoz.module(.{
         pyoz.constant("MAX_VALUE", @as(i64, 1000000)),
         pyoz.constant("DEBUG", false),
     },
+    // .from: auto-scan a Zig namespace — all pub fns, constants, and
+    // docstrings are discovered automatically with zero registration boilerplate.
+    // withSource enables automatic /// doc comments and parameter name extraction.
+    .from = &.{
+        pyoz.withSource(@import("from_extras.zig"), @embedFile("from_extras.zig")),
+    },
 });
 
 // ============================================================================
@@ -3243,8 +3245,3 @@ var math_methods = [_]pyoz.PyMethodDef{
     pyoz.methodDef("is_prime", &pyoz.wrapFunc(math_is_prime), "Check if a number is prime"),
     pyoz.methodDefSentinel(),
 };
-
-/// Module initialization - this is the only boilerplate needed!
-pub export fn PyInit_example() ?*pyoz.PyObject {
-    return Example.init();
-}

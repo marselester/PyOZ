@@ -861,18 +861,15 @@ fn iter_max(items: pyoz.IteratorView(i64)) ?i64 {
 }
 
 // ============================================================================
-// Keyword arguments (kwfunc)
+// Keyword arguments (kwfunc) — uses pyoz.Args(T) for named kwargs
 // ============================================================================
 
-fn greet_person(name: []const u8, greeting: ?[]const u8, times: ?i64) struct { []const u8, []const u8, i64 } {
-    const greet_msg = greeting orelse "Hello";
-    const repeat = times orelse 1;
-    return .{ greet_msg, name, repeat };
+fn greet_person(args: pyoz.Args(struct { name: []const u8, greeting: []const u8 = "Hello", times: i64 = 1 })) struct { []const u8, []const u8, i64 } {
+    return .{ args.value.greeting, args.value.name, args.value.times };
 }
 
-fn power_with_default(base: f64, exponent: ?f64) f64 {
-    const exp = exponent orelse 2.0;
-    return std.math.pow(f64, base, exp);
+fn power_with_default(args: pyoz.Args(struct { base: f64, exponent: f64 = 2.0 })) f64 {
+    return std.math.pow(f64, args.value.base, args.value.exponent);
 }
 
 // Named keyword arguments
@@ -1745,7 +1742,7 @@ const MathError = pyoz.exception("MathError", .{ .base = .RuntimeError, .doc = "
 // Module definition
 // ============================================================================
 
-const Abi3Example = pyoz.module(.{
+pub const Abi3Example = pyoz.module(.{
     .name = "example_abi3",
     .doc = "ABI3-compatible example module demonstrating Stable ABI features",
     .funcs = &.{
@@ -1855,10 +1852,10 @@ const Abi3Example = pyoz.module(.{
         pyoz.func("lazy_fibonacci", lazy_fibonacci, "Create a lazy Fibonacci iterator"),
 
         // Keyword arguments
-        pyoz.kwfunc("greet_person", greet_person, "Greet with optional greeting and times"),
+        pyoz.kwfunc("greet_person", greet_person, "Greet with keyword arguments"),
         pyoz.kwfunc("power_with_default", power_with_default, "Power with default exponent=2"),
-        pyoz.kwfunc_named("greet_named", greet_named, "Greet with named kwargs"),
-        pyoz.kwfunc_named("calculate_named", calculate_named, "Calculate with named kwargs"),
+        pyoz.kwfunc("greet_named", greet_named, "Greet with named kwargs"),
+        pyoz.kwfunc("calculate_named", calculate_named, "Calculate with named kwargs"),
     },
     .classes = &.{
         pyoz.class("Counter", Counter),
@@ -1903,8 +1900,9 @@ const Abi3Example = pyoz.module(.{
         pyoz.mapError("ListFull", .ValueError),
         pyoz.mapErrorMsg("DivisionByZero", .RuntimeError, "Cannot divide by zero"),
     },
+    // .from: auto-scan a Zig namespace — functions, constants, and docstrings
+    // are discovered automatically from pub declarations.
+    .from = &.{
+        @import("from_extras.zig"),
+    },
 });
-
-pub export fn PyInit_example_abi3() ?*pyoz.PyObject {
-    return Abi3Example.init();
-}

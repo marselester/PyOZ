@@ -361,10 +361,6 @@ pub const Module = pyoz.module(.{
         ),
     },
 });
-
-pub export fn PyInit_mymodule() ?*pyoz.PyObject {
-    return Module.init();
-}
 ```
 
 ## API Reference
@@ -392,8 +388,32 @@ pub export fn PyInit_mymodule() ?*pyoz.PyObject {
 3. `pyoz test` / `pyoz bench` extract the content from the binary section using the same mechanism as [type stubs](stubs.md)
 4. The extracted Python file is written to `zig-out/lib/` and executed with `python3`
 
+## Tests in `.from` Namespaces
+
+When using the [`.from` auto-scan API](from.md), you can define tests and benchmarks directly in your scanned namespaces using `__tests__` and `__benchmarks__`:
+
+```zig
+// math.zig
+const pyoz = @import("PyOZ");
+
+pub fn add(a: i64, b: i64) i64 { return a + b; }
+
+pub const __tests__ = &[_]pyoz.TestDef{
+    pyoz.@"test"("add basic", "assert m.add(2, 3) == 5"),
+    pyoz.@"test"("add negative", "assert m.add(-1, 1) == 0"),
+    pyoz.testRaises("add wrong type", "TypeError", "m.add('a', 'b')"),
+};
+
+pub const __benchmarks__ = &[_]pyoz.BenchDef{
+    pyoz.bench("add", "m.add(100, 200)"),
+};
+```
+
+These are automatically merged with any explicit `.tests` / `.benchmarks` in the module config. Run them with `pyoz test` / `pyoz bench` as usual.
+
 ## Next Steps
 
+- [Auto-Scan (.from)](from.md) - Zero-boilerplate module definitions
 - [Type Stubs](stubs.md) - Auto-generated `.pyi` files
 - [Error Handling](errors.md) - Exception types and error mapping
 - [CLI Reference](../cli/test.md) - Detailed CLI options

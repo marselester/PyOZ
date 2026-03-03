@@ -1,6 +1,6 @@
 # Functions
 
-PyOZ provides three ways to expose Zig functions to Python, depending on your parameter needs.
+PyOZ provides two ways to expose Zig functions to Python, depending on your parameter needs.
 
 ## Basic Functions (`pyoz.func`)
 
@@ -18,29 +18,9 @@ fn add(a: i64, b: i64) i64 {
 
 All parameters are required and positional in Python.
 
-## Optional Parameters (`pyoz.kwfunc`)
+## Keyword Arguments (`pyoz.kwfunc`)
 
-For functions where some parameters are optional, use `?T` types:
-
-```zig
-fn greet(name: []const u8, greeting: ?[]const u8, times: ?i64) []const u8 {
-    const msg = greeting orelse "Hello";
-    const n = times orelse 1;
-    // ...
-}
-
-.funcs = &.{
-    pyoz.kwfunc("greet", greet, "Greet someone"),
-},
-```
-
-In Python: `greet("World")`, `greet("World", "Hi")`, or `greet("World", greeting="Hi", times=3)`
-
-Parameters with `?T` default to `None` and can be passed by keyword.
-
-## Named Arguments with Defaults (`pyoz.kwfunc_named`)
-
-For complex functions with multiple optional parameters and non-None defaults, define an Args struct:
+For functions with optional or keyword parameters, define an Args struct using `pyoz.Args(T)`:
 
 ```zig
 const GreetArgs = struct {
@@ -56,9 +36,11 @@ fn greet(args: pyoz.Args(GreetArgs)) []const u8 {
 }
 
 .funcs = &.{
-    pyoz.kwfunc_named("greet", greet, "Greet with options"),
+    pyoz.kwfunc("greet", greet, "Greet with options"),
 },
 ```
+
+In Python: `greet("World")`, `greet("World", "Hi")`, or `greet("World", greeting="Hi", times=3)`
 
 Struct fields with defaults become optional keyword arguments. Fields without defaults are required.
 
@@ -144,11 +126,31 @@ pyoz.func("add", add, "Add two integers.\n\nReturns the sum."),
 | Registration | When to Use |
 |--------------|-------------|
 | `pyoz.func(name, fn, doc)` | All required positional args |
-| `pyoz.kwfunc(name, fn, doc)` | Optional args with `?T` (default to None) |
-| `pyoz.kwfunc_named(name, fn, doc)` | Named kwargs with custom defaults via `Args(T)` |
+| `pyoz.kwfunc(name, fn, doc)` | Named kwargs with defaults via `Args(T)` |
+
+## Auto-Scan Alternative
+
+If your function names match between Zig and Python (which they usually do), you can skip explicit registration entirely using `.from`. PyOZ auto-detects functions, their calling convention (`Args(T)` → kwargs), and `name__doc__` docstrings:
+
+```zig
+// math.zig
+pub fn add(a: i64, b: i64) i64 { return a + b; }
+pub const add__doc__ = "Add two integers";
+```
+
+```zig
+// root
+pub const Example = pyoz.module(.{
+    .name = "example",
+    .from = &.{ @import("math.zig") },
+});
+```
+
+See [Auto-Scan (.from)](from.md) for the full guide.
 
 ## Next Steps
 
+- [Auto-Scan (.from)](from.md) - Zero-boilerplate module definitions
 - [Types](types.md) - Type conversion reference
 - [Errors](errors.md) - Exception handling
 - [Classes](classes.md) - Defining classes

@@ -28,6 +28,7 @@ const attributes_mod = @import("attributes.zig");
 const callable_mod = @import("callable.zig");
 const properties_mod = @import("properties.zig");
 const methods_mod = @import("methods.zig");
+const source_parser = @import("../source_parser.zig");
 const gc_protocol = @import("gc.zig");
 
 /// Build a comptime list of dunder names that are wired to protocol slots
@@ -294,7 +295,22 @@ pub const ClassInfo = struct {
     name: [*:0]const u8,
     zig_type: type,
     parent_zig_type: ?type = null,
+    /// Source text for comptime source parsing (only set for .from classes with withSource)
+    source_text: ?[:0]const u8 = null,
 };
+
+/// Look up the source text for a class type from the class info list.
+pub fn lookupSourceText(comptime class_infos: []const ClassInfo, comptime T: type) ?[:0]const u8 {
+    for (class_infos) |info| {
+        if (info.zig_type == T) return info.source_text;
+    }
+    return null;
+}
+
+/// Convert a comptime []const u8 to [*:0]const u8.
+pub fn comptimeStrZ(comptime s: []const u8) [*:0]const u8 {
+    return (s ++ "\x00")[0..s.len :0].ptr;
+}
 
 /// Configuration for a class definition
 pub const ClassDef = struct {
@@ -554,6 +570,12 @@ fn generateClass(comptime name: [*:0]const u8, comptime T: type, comptime class_
                     @compileError("__doc__ must be declared as [*:0]const u8");
                 }
                 break :blk T.__doc__;
+            } else if (comptime lookupSourceText(class_infos, T)) |src| blk: {
+                const Info = source_parser.SourceInfo(src);
+                if (Info.getDoc(std.mem.span(name))) |doc| {
+                    break :blk comptimeStrZ(doc);
+                }
+                break :blk generateAutoDocWithParent(name, T, is_pyoz_subclass, ParentZigType);
             } else generateAutoDocWithParent(name, T, is_pyoz_subclass, ParentZigType);
 
             // Lifecycle slots
@@ -801,6 +823,12 @@ fn generateClass(comptime name: [*:0]const u8, comptime T: type, comptime class_
                     @compileError("__doc__ must be declared as [*:0]const u8");
                 }
                 break :blk T.__doc__;
+            } else if (comptime lookupSourceText(class_infos, T)) |src| blk: {
+                const Info = source_parser.SourceInfo(src);
+                if (Info.getDoc(std.mem.span(name))) |doc| {
+                    break :blk comptimeStrZ(doc);
+                }
+                break :blk generateAutoDocWithParent(name, T, is_pyoz_subclass, ParentZigType);
             } else generateAutoDocWithParent(name, T, is_pyoz_subclass, ParentZigType);
             slot_array[idx] = .{ .slot = slots.tp_doc, .pfunc = @ptrCast(@constCast(doc_ptr)) };
             idx += 1;

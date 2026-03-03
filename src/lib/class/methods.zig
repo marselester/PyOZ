@@ -9,16 +9,22 @@ const Path = conversion.Path;
 
 const unwrapSignature = @import("../root.zig").unwrapSignature;
 const unwrapSignatureValue = @import("../root.zig").unwrapSignatureValue;
+const stubs_mod = @import("../stubs.zig");
 const class_mod = @import("mod.zig");
 const ClassInfo = class_mod.ClassInfo;
+const source_parser = @import("../source_parser.zig");
 
 /// Build method wrappers for a given type
-pub fn MethodBuilder(comptime _: [*:0]const u8, comptime T: type, comptime PyWrapper: type, comptime class_infos: []const ClassInfo, comptime slot_dunders: []const []const u8) type {
+pub fn MethodBuilder(comptime class_name: [*:0]const u8, comptime T: type, comptime PyWrapper: type, comptime class_infos: []const ClassInfo, comptime slot_dunders: []const []const u8) type {
     const struct_info = @typeInfo(T).@"struct";
     const decls = struct_info.decls;
 
     return struct {
         const Self = @This();
+
+        // Source text for comptime source parsing (looked up from class_infos)
+        const class_source: ?[:0]const u8 = class_mod.lookupSourceText(class_infos, T);
+        const class_struct_name: []const u8 = std.mem.span(class_name);
 
         // ====================================================================
         // Method counting and detection
@@ -178,7 +184,8 @@ pub fn MethodBuilder(comptime _: [*:0]const u8, comptime T: type, comptime PyWra
         // Docstring helpers
         // ====================================================================
 
-        /// Get method docstring from method_name__doc__ declaration if it exists
+        /// Get method docstring from method_name__doc__ declaration if it exists,
+        /// falling back to source-parsed /// doc comment.
         pub fn getMethodDoc(comptime method_name: []const u8) ?[*:0]const u8 {
             const doc_name = method_name ++ "__doc__";
             if (@hasDecl(T, doc_name)) {
@@ -187,6 +194,28 @@ pub fn MethodBuilder(comptime _: [*:0]const u8, comptime T: type, comptime PyWra
                     @compileError(doc_name ++ " must be declared as [*:0]const u8, e.g.: pub const " ++ doc_name ++ ": [*:0]const u8 = \"...\";");
                 }
                 return @field(T, doc_name);
+            }
+            // Fall back to source-parsed /// doc comment
+            if (class_source) |src| {
+                const Info = source_parser.SourceInfo(src);
+                if (Info.getMethodDoc(class_struct_name, method_name)) |doc| {
+                    return class_mod.comptimeStrZ(doc);
+                }
+            }
+            return null;
+        }
+
+        /// Get method parameter names from method_name__params__ declaration if it exists,
+        /// falling back to source-parsed function signature.
+        fn getMethodParams(comptime method_name: []const u8) ?[]const u8 {
+            const params_name = method_name ++ "__params__";
+            if (@hasDecl(T, params_name)) {
+                return stubs_mod.asSlice(@field(T, params_name));
+            }
+            // Fall back to source-parsed parameter names
+            if (class_source) |src| {
+                const Info = source_parser.SourceInfo(src);
+                return Info.getMethodParams(class_struct_name, method_name);
             }
             return null;
         }
@@ -208,7 +237,14 @@ pub fn MethodBuilder(comptime _: [*:0]const u8, comptime T: type, comptime PyWra
                         .ml_name = @ptrCast(decl.name.ptr),
                         .ml_meth = @ptrCast(generateMethodWrapper(decl.name)),
                         .ml_flags = py.METH_VARARGS,
-                        .ml_doc = getMethodDoc(decl.name),
+                        .ml_doc = stubs_mod.buildMlDoc(
+                            decl.name,
+                            @TypeOf(@field(T, decl.name)),
+                            .instance_method,
+                            false,
+                            getMethodDoc(decl.name),
+                            getMethodParams(decl.name),
+                        ),
                     };
                     idx += 1;
                 }
@@ -221,7 +257,14 @@ pub fn MethodBuilder(comptime _: [*:0]const u8, comptime T: type, comptime PyWra
                         .ml_name = @ptrCast(decl.name.ptr),
                         .ml_meth = @ptrCast(generateStaticMethodWrapper(decl.name)),
                         .ml_flags = py.METH_VARARGS | py.METH_STATIC,
-                        .ml_doc = getMethodDoc(decl.name),
+                        .ml_doc = stubs_mod.buildMlDoc(
+                            decl.name,
+                            @TypeOf(@field(T, decl.name)),
+                            .static_method,
+                            false,
+                            getMethodDoc(decl.name),
+                            getMethodParams(decl.name),
+                        ),
                     };
                     idx += 1;
                 }
@@ -234,7 +277,14 @@ pub fn MethodBuilder(comptime _: [*:0]const u8, comptime T: type, comptime PyWra
                         .ml_name = @ptrCast(decl.name.ptr),
                         .ml_meth = @ptrCast(generateClassMethodWrapper(decl.name)),
                         .ml_flags = py.METH_VARARGS | py.METH_CLASS,
-                        .ml_doc = getMethodDoc(decl.name),
+                        .ml_doc = stubs_mod.buildMlDoc(
+                            decl.name,
+                            @TypeOf(@field(T, decl.name)),
+                            .class_method,
+                            false,
+                            getMethodDoc(decl.name),
+                            getMethodParams(decl.name),
+                        ),
                     };
                     idx += 1;
                 }

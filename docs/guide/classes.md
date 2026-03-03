@@ -10,7 +10,7 @@ const Point = struct {
     y: f64,
 };
 
-const MyModule = pyoz.module(.{
+pub const MyModule = pyoz.module(.{
     .name = "mymodule",
     .classes = &.{
         pyoz.class("Point", Point),
@@ -528,7 +528,7 @@ const Line = struct {
     }
 };
 
-const MyModule = pyoz.module(.{
+pub const MyModule = pyoz.module(.{
     .name = "geometry",
     .classes = &.{
         pyoz.class("Point", Point),
@@ -688,7 +688,7 @@ def find(self, arg0: str) -> Node: ...
 
 ### Parameter Names (`__params__`)
 
-Zig's `@typeInfo` does not expose function parameter names, so stubs default to `arg0, arg1, ...`. Override with actual names:
+Zig's `@typeInfo` does not expose function parameter names, so stubs and `help()` default to `arg0, arg1, ...`. For `.from` module-level functions, [`pyoz.withSource()`](from.md#source-introspection-with-withsource) extracts real parameter names automatically. For class methods, use the `__params__` convention to override:
 
 ```zig
 const Node = struct {

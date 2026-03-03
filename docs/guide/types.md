@@ -197,7 +197,7 @@ When returning `?*pyoz.PyObject`, the converter passes it through as-is — no a
 **Converting registered classes to PyObject:** When building raw Python containers that hold instances of your registered classes, use the module-level converter instead of `pyoz.Conversions`. The generic `pyoz.Conversions` has no class knowledge and will return `null` for class types.
 
 ```zig
-const Module = pyoz.module(.{
+pub const Module = pyoz.module(.{
     .name = "mymodule",
     .classes = &.{ pyoz.class("Node", Node) },
 });

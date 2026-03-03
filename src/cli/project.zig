@@ -521,11 +521,6 @@ const lib_zig_template =
     \\    .classes = &.{},
     \\});
     \\
-    \\// Module initialization function
-    \\pub export fn PyInit_{[name]s}() ?*pyoz.PyObject {
-    \\    return Module.init();
-    \\}
-    \\
 ;
 
 const build_zig_template =
@@ -550,7 +545,7 @@ const build_zig_template =
     \\        .optimize = optimize,
     \\    });
     \\
-    \\    // Create the user's lib module (shared between library and stub generator)
+    \\    // Create the user's lib module
     \\    const user_lib_mod = b.createModule(.{
     \\        .root_source_file = b.path("src/lib.zig"),
     \\        .target = target,
@@ -561,11 +556,33 @@ const build_zig_template =
     \\        },
     \\    });
     \\
+    \\    // Generate a bridge module that forces analysis of all pub decls in the
+    \\    // user's code. This triggers @export inside pyoz.module() so the PyInit_
+    \\    // function is automatically created — no manual boilerplate needed.
+    \\    const bridge_wf = b.addWriteFiles();
+    \\    const bridge_source = bridge_wf.add("_pyoz_bridge.zig",
+    \\        \\const _mod = @import("_pyoz_mod");
+    \\        \\comptime {
+    \\        \\    for (@typeInfo(_mod).@"struct".decls) |decl| {
+    \\        \\        _ = @field(_mod, decl.name);
+    \\        \\    }
+    \\        \\}
+    \\    );
+    \\    const bridge_mod = b.createModule(.{
+    \\        .root_source_file = bridge_source,
+    \\        .target = target,
+    \\        .optimize = optimize,
+    \\        .strip = strip,
+    \\        .imports = &.{
+    \\            .{ .name = "_pyoz_mod", .module = user_lib_mod },
+    \\        },
+    \\    });
+    \\
     \\    // Build the Python extension as a dynamic library
     \\    const lib = b.addLibrary(.{
     \\        .name = "{[name]s}",
     \\        .linkage = .dynamic,
-    \\        .root_module = user_lib_mod,
+    \\        .root_module = bridge_mod,
     \\    });
     \\
     \\    // Link libc (required for Python C API)
@@ -616,7 +633,7 @@ const build_zig_package_template =
     \\        .optimize = optimize,
     \\    });
     \\
-    \\    // Create the user's lib module (shared between library and stub generator)
+    \\    // Create the user's lib module
     \\    const user_lib_mod = b.createModule(.{
     \\        .root_source_file = b.path("src/lib.zig"),
     \\        .target = target,
@@ -627,12 +644,34 @@ const build_zig_package_template =
     \\        },
     \\    });
     \\
+    \\    // Generate a bridge module that forces analysis of all pub decls in the
+    \\    // user's code. This triggers @export inside pyoz.module() so the PyInit_
+    \\    // function is automatically created — no manual boilerplate needed.
+    \\    const bridge_wf = b.addWriteFiles();
+    \\    const bridge_source = bridge_wf.add("_pyoz_bridge.zig",
+    \\        \\const _mod = @import("_pyoz_mod");
+    \\        \\comptime {
+    \\        \\    for (@typeInfo(_mod).@"struct".decls) |decl| {
+    \\        \\        _ = @field(_mod, decl.name);
+    \\        \\    }
+    \\        \\}
+    \\    );
+    \\    const bridge_mod = b.createModule(.{
+    \\        .root_source_file = bridge_source,
+    \\        .target = target,
+    \\        .optimize = optimize,
+    \\        .strip = strip,
+    \\        .imports = &.{
+    \\            .{ .name = "_pyoz_mod", .module = user_lib_mod },
+    \\        },
+    \\    });
+    \\
     \\    // Build the Python extension as a dynamic library
     \\    // Note: underscore prefix separates the .so from the Python package directory
     \\    const lib = b.addLibrary(.{
     \\        .name = "_{[name]s}",
     \\        .linkage = .dynamic,
-    \\        .root_module = user_lib_mod,
+    \\        .root_module = bridge_mod,
     \\    });
     \\
     \\    // Link libc (required for Python C API)
@@ -704,11 +743,6 @@ const lib_zig_package_template =
     \\    },
     \\    .classes = &.{},
     \\});
-    \\
-    \\// Module initialization function (underscore prefix for package layout)
-    \\pub export fn PyInit__{[name]s}() ?*pyoz.PyObject {
-    \\    return Module.init();
-    \\}
     \\
 ;
 

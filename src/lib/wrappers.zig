@@ -250,163 +250,6 @@ pub fn wrapFunctionWithNamedKeywords(comptime zig_func: anytype, comptime class_
     }.wrapper;
 }
 
-/// Generate a Python-callable wrapper for a Zig function with keyword argument support
-/// Optional parameters (?T) are treated as optional keyword arguments
-pub fn wrapFunctionWithKeywords(comptime zig_func: anytype, comptime class_infos: []const ClassInfo) PyCFunctionWithKeywords {
-    const Conv = Converter(class_infos);
-    const Fn = @TypeOf(zig_func);
-    const fn_info = @typeInfo(Fn).@"fn";
-    const params = fn_info.params;
-    const ReturnType = unwrapSignature(fn_info.return_type orelse void);
-
-    return struct {
-        // Generate parameter names at comptime (arg0, arg1, etc.)
-        const num_params = params.len;
-
-        // Pre-generate kwarg names at comptime to avoid runtime formatting
-        const kwarg_names = blk: {
-            var names: [num_params][*:0]const u8 = undefined;
-            for (0..num_params) |i| {
-                names[i] = std.fmt.comptimePrint("arg{d}", .{i});
-            }
-            break :blk names;
-        };
-
-        // Count required vs optional parameters
-        const num_required = countRequired();
-
-        fn countRequired() usize {
-            var count: usize = 0;
-            for (params) |param| {
-                const ParamType = param.type.?;
-                if (@typeInfo(ParamType) != .optional) {
-                    count += 1;
-                }
-            }
-            return count;
-        }
-
-        fn wrapper(self: ?*PyObject, args: ?*PyObject, kwargs: ?*PyObject) callconv(.c) ?*PyObject {
-            _ = self;
-
-            var zig_args = parseArgsWithKwargs(args, kwargs) catch |err| {
-                setError(err);
-                return null;
-            };
-            // Ensure BufferView arguments are released after the function call
-            defer releaseBufferViews(&zig_args);
-
-            const raw_result = @call(.auto, zig_func, zig_args);
-            const result = unwrapSignatureValue(@TypeOf(raw_result), raw_result);
-            return handleReturn(ReturnType, result);
-        }
-
-        fn releaseBufferViews(zig_args: *ArgsTuple(params)) void {
-            inline for (0..params.len) |i| {
-                const ParamType = params[i].type.?;
-                const param_info = @typeInfo(ParamType);
-                if (param_info == .@"struct" and @hasDecl(ParamType, "is_buffer_view") and ParamType.is_buffer_view) {
-                    zig_args[i].release();
-                }
-                // Release Path types that hold Python object references
-                if (ParamType == conversion.Path) {
-                    zig_args[i].deinit();
-                }
-            }
-        }
-
-        fn parseArgsWithKwargs(args: ?*PyObject, kwargs: ?*PyObject) !ArgsTuple(params) {
-            var result: ArgsTuple(params) = undefined;
-
-            // Get positional args count
-            const pos_count: usize = if (args) |a| @intCast(py.PyTuple_Size(a)) else 0;
-
-            // Validate we have at least the required args
-            if (pos_count < num_required) {
-                // Check if kwargs can fill in the rest
-                var kwargs_provided: usize = 0;
-                if (kwargs) |kw| {
-                    kwargs_provided = @intCast(py.PyDict_Size(kw));
-                }
-                if (pos_count + kwargs_provided < num_required) {
-                    return error.WrongArgumentCount;
-                }
-            }
-
-            // Parse each parameter
-            inline for (params, 0..) |param, i| {
-                const ParamType = param.type.?;
-                const is_optional = @typeInfo(ParamType) == .optional;
-
-                // Try to get from positional args first
-                if (i < pos_count) {
-                    const item = py.PyTuple_GetItem(args.?, @intCast(i)) orelse return error.InvalidArgument;
-                    if (is_optional) {
-                        // Wrap in optional
-                        const InnerType = @typeInfo(ParamType).optional.child;
-                        if (py.PyNone_Check(item)) {
-                            result[i] = null;
-                        } else {
-                            result[i] = try Conv.fromPy(InnerType, item);
-                        }
-                    } else {
-                        result[i] = try Conv.fromPy(ParamType, item);
-                    }
-                } else if (kwargs != null) {
-                    // Try to get from kwargs using comptime-generated parameter name
-                    if (py.PyDict_GetItemString(kwargs.?, kwarg_names[i])) |item| {
-                        if (is_optional) {
-                            const InnerType = @typeInfo(ParamType).optional.child;
-                            if (py.PyNone_Check(item)) {
-                                result[i] = null;
-                            } else {
-                                result[i] = try Conv.fromPy(InnerType, item);
-                            }
-                        } else {
-                            result[i] = try Conv.fromPy(ParamType, item);
-                        }
-                    } else if (is_optional) {
-                        // Optional param not provided - use null
-                        result[i] = null;
-                    } else {
-                        return error.MissingArguments;
-                    }
-                } else if (is_optional) {
-                    // Optional param not provided - use null
-                    result[i] = null;
-                } else {
-                    return error.MissingArguments;
-                }
-            }
-
-            return result;
-        }
-
-        fn handleReturn(comptime RT: type, result: anytype) ?*PyObject {
-            const rt_info = @typeInfo(RT);
-
-            if (rt_info == .error_union) {
-                if (result) |value| {
-                    return Conv.toPy(@TypeOf(value), value);
-                } else |err| {
-                    setError(err);
-                    return null;
-                }
-            } else {
-                return Conv.toPy(RT, result);
-            }
-        }
-
-        fn setError(err: anyerror) void {
-            // Don't overwrite an exception already set by Python
-            // (e.g., KeyboardInterrupt from checkSignals)
-            if (py.PyErr_Occurred() != null) return;
-            const msg = @errorName(err);
-            py.PyErr_SetString(mapErrorToExc(err), msg.ptr);
-        }
-    }.wrapper;
-}
-
 /// Generate a wrapper with custom error mapping
 pub fn wrapFunctionWithErrorMapping(comptime zig_func: anytype, comptime class_infos: []const ClassInfo, comptime error_mappings: []const ErrorMapping) py.PyCFunction {
     const Conv = Converter(class_infos);
@@ -510,29 +353,8 @@ pub fn func(comptime name: [*:0]const u8, comptime function: anytype, comptime d
     };
 }
 
-/// Function definition with keyword argument support
-pub fn KwFuncDefEntry(comptime Func: type) type {
-    return struct {
-        name: [*:0]const u8,
-        func: Func,
-        doc: ?[*:0]const u8,
-        is_kwargs: bool = true,
-    };
-}
-
-/// Create a function entry that accepts keyword arguments
-/// Functions with optional parameters (?T) will have those as optional kwargs with default null
-pub fn kwfunc(comptime name: [*:0]const u8, comptime function: anytype, comptime doc: ?[*:0]const u8) KwFuncDefEntry(@TypeOf(function)) {
-    return .{
-        .name = name,
-        .func = function,
-        .doc = doc,
-        .is_kwargs = true,
-    };
-}
-
 // ============================================================================
-// Named Keyword Arguments Support
+// Keyword Arguments Support
 // ============================================================================
 
 /// Define named keyword arguments using a struct.
@@ -566,8 +388,8 @@ pub fn Args(comptime T: type) type {
     };
 }
 
-/// Wrapper type for functions with named keyword arguments
-pub fn NamedKwFuncDefEntry(comptime Func: type) type {
+/// Wrapper type for functions with keyword arguments using Args(T)
+pub fn KwFuncDefEntry(comptime Func: type) type {
     return struct {
         name: [*:0]const u8,
         func: Func,
@@ -576,9 +398,9 @@ pub fn NamedKwFuncDefEntry(comptime Func: type) type {
     };
 }
 
-/// Create a function entry with named keyword arguments
-/// The function should accept Args(YourArgsStruct) as its parameter
-pub fn kwfunc_named(comptime name: [*:0]const u8, comptime function: anytype, comptime doc: ?[*:0]const u8) NamedKwFuncDefEntry(@TypeOf(function)) {
+/// Create a function entry with keyword arguments.
+/// The function should accept Args(YourArgsStruct) as its parameter.
+pub fn kwfunc(comptime name: [*:0]const u8, comptime function: anytype, comptime doc: ?[*:0]const u8) KwFuncDefEntry(@TypeOf(function)) {
     return .{
         .name = name,
         .func = function,

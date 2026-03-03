@@ -3,7 +3,7 @@
 import shutil
 import sys
 
-from _pyoz import (
+from ._pyoz import (
     build,
     develop,
     init,
