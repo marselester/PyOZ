@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **`.from` enums with unsigned integer tags (`enum(u8)`, `enum(u16)`, etc.) registered as StrEnum instead of IntEnum** — The `isIntEnum` detection in `from.zig` used a flawed heuristic (checking signedness + exhaustiveness) that only recognized signed tags like `enum(i32)`. Unsigned explicit tags like `enum(u8)` fell through and were incorrectly registered as StrEnum, causing `.value` to return string names instead of integer values. Fixed by matching the proven logic from `enums.zig` — checking against standard integer types (`u8`, `u16`, `u32`, `u64`, `i8`, `i16`, `i32`, `i64`, `isize`, `c_int`, `c_long`), which correctly distinguishes user-specified tags from Zig's auto-generated non-standard bit-width tags (`u1`, `u2`, `u3`, ...).
+- **Build-time `PyInit_` symbol validation** — `pyoz build`/`pyoz dev` now validates that the compiled `.so`/`.pyd` exports the expected `PyInit_<module_name>` symbol after building. Catches mismatches between `module-name` in `pyproject.toml` and the Zig export function, printing a clear warning with the exact fix needed. Prevents the confusing `ImportError: dynamic module does not define module export function` at runtime.
 
 ## [0.11.5] - 2026-02-28
 

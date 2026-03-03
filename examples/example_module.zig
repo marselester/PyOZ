@@ -3246,7 +3246,7 @@ var math_methods = [_]pyoz.PyMethodDef{
     pyoz.methodDefSentinel(),
 };
 
-/// Module initialization - this is the only boilerplate needed!
+/// Module initialization function
 pub export fn PyInit_example() ?*pyoz.PyObject {
     return Example.init();
 }

@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const project = @import("project.zig");
+const symreader = @import("symreader.zig");
 
 /// Python configuration detected from the system
 pub const PythonConfig = struct {
@@ -215,6 +216,21 @@ pub fn buildModule(allocator: std.mem.Allocator, release: bool) !BuildResult {
         // On Windows, Zig places DLLs (.pyd) in zig-out/bin/, import libs in zig-out/lib/
         const out_dir = if (builtin.os.tag == .windows) "zig-out/bin" else "zig-out/lib";
         const module_path = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ out_dir, module_name });
+
+        // Validate that the compiled module exports the correct PyInit_ function.
+        // Catches mismatches between module-name in pyproject.toml and the Zig export function.
+        const mod_name = config.getModuleName();
+        const expected_init = try std.fmt.allocPrint(allocator, "PyInit_{s}", .{mod_name});
+        defer allocator.free(expected_init);
+
+        if (!symreader.hasExportSymbol(allocator, module_path, expected_init)) {
+            std.debug.print("\nWarning: Module '{s}' does not export '{s}'.\n", .{ module_path, expected_init });
+            std.debug.print("Python will fail with: ImportError: dynamic module does not define module export function ({s})\n", .{expected_init});
+            std.debug.print("\nTo fix, ensure your Zig source has:\n", .{});
+            std.debug.print("  pub export fn {s}() ?*pyoz.PyObject {{\n", .{expected_init});
+            std.debug.print("      return Module.init();\n  }}\n\n", .{});
+            std.debug.print("And that .name in pyoz.module() matches: .name = \"{s}\"\n", .{mod_name});
+        }
 
         return BuildResult{
             .module_path = module_path,
