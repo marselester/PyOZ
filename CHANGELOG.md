@@ -19,6 +19,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`__text_signature__` support for `help()` and `inspect.signature()`** — All functions (module-level and class methods) now embed a CPython Argument Clinic-style signature in `ml_doc`. `help(func)` shows proper parameter names instead of `add(...)`. Keyword argument functions using `pyoz.Args(T)` show field names and defaults (e.g. `safe_sqrt(value, default=None)`). Class methods correctly use `self`/`$type` conventions. When `withSource` is used for a `.from` namespace, real Zig parameter names are used (e.g. `count_words(s, /)` instead of `count_words(arg0, /)`); without source, positional args fall back to `arg0`/`arg1`.
 - **`pyoz.withSource(@import("f.zig"), @embedFile("f.zig"))` — comptime source introspection** — New wrapper for `.from` entries that enables automatic extraction of `///` doc comments as Python docstrings, `//!` module-level doc comments as `module.__doc__`, real function parameter names for `__text_signature__` and `.pyi` stubs, and `///` comments above structs as class `__doc__`. No boilerplate needed in the `.from` file — just wrap the `@import` at the module config site. Uses `std.zig.Tokenizer` at comptime — source text is NOT embedded in the final binary. Explicit `{name}__doc__` and `{name}__params__` constants still take priority for backward compatibility. A legacy per-file `__source__` function/constant is also supported.
 
+### ⚠️ Breaking Changes — Migration from 0.11.x
+
+🔧 **`build.zig` must be updated.** The build system now uses a bridge module pattern to auto-export `PyInit_`. Projects created with `pyoz init` on 0.11.x need their `build.zig` replaced. The easiest way is to re-run `pyoz init --path` in your project directory (backs up existing files), or manually update `build.zig` to match the new template — see the [generated build.zig](https://github.com/pyozig/PyOZ/blob/dev/src/cli/project.zig) for the current template.
+
+🗑️ **Remove manual `PyInit_` exports.** If your `lib.zig` contains `pub export fn PyInit_mymod`, delete it. The auto-export now handles this. Keeping it causes a `exported symbol collision` compile error.
+
+🔓 **Make the module const `pub`.** Change `const MyMod = pyoz.module(.{...});` to `pub const MyMod = pyoz.module(.{...});`. The bridge module needs to see it to trigger the auto-export.
+
+🔄 **`kwfunc` now requires `pyoz.Args(T)`.** The old `kwfunc` that accepted functions with `?T` optional parameters is removed. Wrap your kwargs in a struct:
+```zig
+// Before (0.11.x)
+fn greet(name: ?[]const u8, times: ?i32) []const u8 { ... }
+pyoz.kwfunc("greet", greet, "Greet someone")
+
+// After (0.12.0)
+fn greet(args: pyoz.Args(struct { name: ?[]const u8 = null, times: ?i32 = null })) []const u8 {
+    const name = args.value.name orelse "World";
+    ...
+}
+pyoz.kwfunc("greet", greet, "Greet someone")
+```
+
 ### Changed
 - **`kwfunc` renamed from `kwfunc_named`** — The old `kwfunc` (which generated unusable `arg0`/`arg1` kwarg names due to Zig's `@typeInfo` not exposing parameter names) is removed. `kwfunc_named` is renamed to `kwfunc` and is now the only way to register keyword argument functions. All kwargs functions must use `pyoz.Args(T)` for real parameter names.
 - **Removed broken `?T` kwargs auto-detection** — Functions with optional `?T` parameters are no longer auto-detected as keyword argument functions (in both `.from` and explicit registration). The `?T` detection generated unusable `arg0`/`arg1` names. Use `pyoz.Args(T)` instead for proper named kwargs support.
