@@ -3245,5 +3245,3 @@ var math_methods = [_]pyoz.PyMethodDef{
     pyoz.methodDef("is_prime", &pyoz.wrapFunc(math_is_prime), "Check if a number is prime"),
     pyoz.methodDefSentinel(),
 };
-
-

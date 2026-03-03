@@ -125,7 +125,6 @@ pub fn safe_sqrt(args: pyoz.Args(struct { value: f64, default: ?f64 = null })) f
 
 /// A 2D vector with x and y components.
 pub const Vec2 = struct {
-
     x: f64,
     y: f64,
 

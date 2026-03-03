@@ -1906,5 +1906,3 @@ pub const Abi3Example = pyoz.module(.{
         @import("from_extras.zig"),
     },
 });
-
-
