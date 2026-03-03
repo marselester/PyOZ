@@ -146,11 +146,12 @@ fn createWheelZip(
     defer if (stub_name) |sn| allocator.free(sn);
 
     if (stub_content) |sc| {
+        const mod_name = config.getModuleName();
         // In package mode, place .pyi inside the package directory
         if (is_package_mode) {
-            stub_name = try std.fmt.allocPrint(allocator, "{s}/{s}.pyi", .{ config.name, config.name });
+            stub_name = try std.fmt.allocPrint(allocator, "{s}/{s}.pyi", .{ config.name, mod_name });
         } else {
-            stub_name = try std.fmt.allocPrint(allocator, "{s}.pyi", .{config.name});
+            stub_name = try std.fmt.allocPrint(allocator, "{s}.pyi", .{mod_name});
         }
         try z.addFile(stub_name.?, sc);
     }
@@ -336,8 +337,18 @@ fn addPythonPackage(
     py_files: *std.ArrayListUnmanaged([]const u8),
     config: *const project.toml.PyProjectConfig,
 ) !void {
-    var pkg_dir = cwd.openDir(pkg_name, .{ .iterate = true }) catch |err| {
-        std.debug.print("  Warning: Python package directory '{s}' not found: {}\n", .{ pkg_name, err });
+    // Try src-layout first (src/<pkg_name>/), then flat layout (<pkg_name>/)
+    const src_path = try std.fmt.allocPrint(allocator, "src/{s}", .{pkg_name});
+    defer allocator.free(src_path);
+
+    const is_src_layout = blk: {
+        cwd.access(src_path, .{}) catch break :blk false;
+        break :blk true;
+    };
+    const disk_prefix = if (is_src_layout) src_path else pkg_name;
+
+    var pkg_dir = cwd.openDir(disk_prefix, .{ .iterate = true }) catch |err| {
+        std.debug.print("  Warning: Python package directory '{s}' not found (tried 'src/{s}' and '{s}'): {}\n", .{ pkg_name, pkg_name, pkg_name, err });
         return;
     };
     defer pkg_dir.close();
@@ -349,11 +360,11 @@ fn addPythonPackage(
         if (entry.kind != .file) continue;
         if (!config.shouldIncludeFile(entry.basename)) continue;
 
-        // Build the in-wheel path: pkg_name/subdir/file.py
+        // Build the in-wheel path: pkg_name/subdir/file.py (always flat in wheel)
         const wheel_path = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ pkg_name, entry.path });
 
-        // Build the disk path relative to cwd
-        const disk_path = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ pkg_name, entry.path });
+        // Build the disk path relative to cwd (may be src/<pkg>/ or <pkg>/)
+        const disk_path = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ disk_prefix, entry.path });
         defer allocator.free(disk_path);
 
         std.debug.print("  Adding Python file: {s}\n", .{wheel_path});
