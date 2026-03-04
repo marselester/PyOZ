@@ -468,6 +468,20 @@ pub fn isNamedKwargsFunc(comptime Fn: type) bool {
     return @hasDecl(ParamType, "is_pyoz_args");
 }
 
+/// Check if a function has any optional (?T) parameters.
+/// Used by .from auto-scan to auto-detect kwargs-capable functions.
+/// Functions with optional params can accept those params as keyword arguments
+/// without requiring the pyoz.Args(T) wrapper.
+pub fn hasOptionalParams(comptime Fn: type) bool {
+    const info = @typeInfo(Fn);
+    if (info != .@"fn") return false;
+    for (info.@"fn".params) |param| {
+        const ptype = param.type orelse continue;
+        if (@typeInfo(ptype) == .optional) return true;
+    }
+    return false;
+}
+
 // =============================================================================
 // Filtering
 // =============================================================================

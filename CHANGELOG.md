@@ -7,9 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.12.1] - 2026-03-04
 
+### Added
+- **Auto-kwargs for `?T` params in `.from`** — Functions discovered via `.from` that have optional (`?T`) parameters now automatically support keyword arguments without requiring `pyoz.Args(T)`. Required params stay positional-only, optional params become keyword-capable. For example, `fn add(a: i64, b: i64, multiplier: ?i64)` generates the Python signature `add(a, b, /, multiplier=None)` and can be called as `add(1, 2, multiplier=5)`. Requires source text (via `pyoz.withSource()`, `__source__()`, or `__params__`) for parameter name extraction. A compile-time warning is emitted if `?T` params are used without source text.
+- **`.funcs` and `.classes` are now optional in `pyoz.module()`** — When using `.from` for all declarations, you no longer need to specify empty `.funcs = &.{}` and `.classes = &.{}`.
+
+### Changed
+- **Enum stubs show type annotations instead of values** — Generated `.pyi` stubs for enums now use `field: int` / `field: str` instead of exposing the actual values (`field = 0` / `field = "name"`).
+
 ### Fixed
 - **Package mode no longer requires underscore prefix in `module-name`** — Package layout detection now uses `py-packages` containing the project name, instead of requiring the module name to start with `_`. Users can now use `module-name = "liburing"` with `py-packages = ["liburing"]` and `from .liburing import *` in `__init__.py`. The underscore convention still works but is no longer required. Affects `pyoz develop`, `pyoz build`, `pyoz test`, `pyoz bench`, and wheel building.
 - **`build.zig` templates now include guidance for custom C include paths** — The generated `build.zig` includes comments showing that `addIncludePath` and `addObjectFile` must be added to `user_lib_mod`, not `lib.root_module` (which is the bridge module in 0.12.0). This prevents `@cImport` failures when wrapping C libraries.
+- **Better compile error for `kwfunc` without `pyoz.Args(T)`** — When using explicit `kwfunc` with a parameter not wrapped in `pyoz.Args(T)`, the compiler now shows a clear error message with the fix, instead of the cryptic `type 'u32' has no members`.
 
 ## [0.12.0] - 2026-03-01
 

@@ -136,7 +136,11 @@ pub fn wrapFunctionWithNamedKeywords(comptime zig_func: anytype, comptime class_
 
     // Get the Args wrapper type and the inner struct type
     const ArgsWrapperType = params[0].type.?;
-    const ArgsStructType = ArgsWrapperType.ArgsStruct;
+    const ArgsStructType = if (@typeInfo(ArgsWrapperType) == .@"struct" and @hasDecl(ArgsWrapperType, "ArgsStruct"))
+        ArgsWrapperType.ArgsStruct
+    else
+        @compileError("kwfunc parameter must be wrapped in pyoz.Args(T). Change `fn(" ++
+            @typeName(ArgsWrapperType) ++ ")` to `fn(pyoz.Args(YourArgsStruct))`");
     const args_fields = @typeInfo(ArgsStructType).@"struct".fields;
 
     return struct {
@@ -329,6 +333,170 @@ pub fn wrapFunctionWithErrorMapping(comptime zig_func: anytype, comptime class_i
             setErrorFromMapping(error_mappings, err);
         }
     }.wrapper;
+}
+
+/// Generate a Python-callable wrapper for a function with optional params as kwargs.
+/// Used by .from auto-scan when functions have ?T parameters.
+/// Required (non-optional) params are positional-only; optional (?T) params
+/// can be passed positionally or as keyword arguments, defaulting to null.
+/// `param_names_str` is a comma-separated list of parameter names (from source parsing).
+pub fn wrapAutoKeywordFunction(
+    comptime zig_func: anytype,
+    comptime class_infos: []const ClassInfo,
+    comptime param_names_str: []const u8,
+) PyCFunctionWithKeywords {
+    const Conv = Converter(class_infos);
+    const Fn = @TypeOf(zig_func);
+    const fn_info = @typeInfo(Fn).@"fn";
+    const params = fn_info.params;
+    const ReturnType = unwrapSignature(fn_info.return_type orelse void);
+
+    // Build comptime string data for each parameter
+    const ParamMeta = struct {
+        kw_name: [*:0]const u8,
+        type_err_msg: [*:0]const u8,
+        missing_err_msg: [*:0]const u8,
+    };
+    const param_meta = comptime blk: {
+        var meta: [params.len]ParamMeta = undefined;
+        for (0..params.len) |i| {
+            const name = getParamName(param_names_str, i);
+            meta[i] = .{
+                .kw_name = (name ++ "\x00")[0..name.len :0].ptr,
+                .type_err_msg = ("Invalid type for argument: " ++ name ++ "\x00")[0 .. "Invalid type for argument: ".len + name.len :0].ptr,
+                .missing_err_msg = ("Missing required argument: " ++ name ++ "\x00")[0 .. "Missing required argument: ".len + name.len :0].ptr,
+            };
+        }
+        break :blk meta;
+    };
+
+    return struct {
+        fn wrapper(self: ?*PyObject, args: ?*PyObject, kwargs: ?*PyObject) callconv(.c) ?*PyObject {
+            _ = self;
+
+            var zig_args: ArgsTuple(params) = undefined;
+            const pos_count: usize = if (args) |a| @intCast(py.PyTuple_Size(a)) else 0;
+
+            inline for (params, 0..) |param, i| {
+                const ParamType = param.type.?;
+                const is_optional = @typeInfo(ParamType) == .optional;
+                const meta = param_meta[i];
+
+                if (i < pos_count) {
+                    // Provided as positional argument
+                    const item = py.PyTuple_GetItem(args.?, @intCast(i)) orelse {
+                        py.PyErr_SetString(py.PyExc_TypeError(), meta.type_err_msg);
+                        return null;
+                    };
+                    if (is_optional and py.PyNone_Check(item)) {
+                        zig_args[i] = null;
+                    } else if (is_optional) {
+                        const inner_type = @typeInfo(ParamType).optional.child;
+                        zig_args[i] = Conv.fromPy(inner_type, item) catch {
+                            py.PyErr_SetString(py.PyExc_TypeError(), meta.type_err_msg);
+                            return null;
+                        };
+                    } else {
+                        zig_args[i] = Conv.fromPy(ParamType, item) catch {
+                            py.PyErr_SetString(py.PyExc_TypeError(), meta.type_err_msg);
+                            return null;
+                        };
+                    }
+                } else if (is_optional) {
+                    // Optional param — try kwargs, default to null
+                    if (kwargs) |kw| {
+                        if (py.PyDict_GetItemString(kw, meta.kw_name)) |item| {
+                            if (py.PyNone_Check(item)) {
+                                zig_args[i] = null;
+                            } else {
+                                const inner_type = @typeInfo(ParamType).optional.child;
+                                zig_args[i] = Conv.fromPy(inner_type, item) catch {
+                                    py.PyErr_SetString(py.PyExc_TypeError(), meta.type_err_msg);
+                                    return null;
+                                };
+                            }
+                        } else {
+                            zig_args[i] = null;
+                        }
+                    } else {
+                        zig_args[i] = null;
+                    }
+                } else {
+                    // Required param not provided
+                    py.PyErr_SetString(py.PyExc_TypeError(), meta.missing_err_msg);
+                    return null;
+                }
+            }
+
+            // Ensure BufferView arguments are released after the function call
+            defer releaseBufferViews(&zig_args);
+
+            const raw_result = @call(.auto, zig_func, zig_args);
+            const result = unwrapSignatureValue(@TypeOf(raw_result), raw_result);
+            return handleReturn(ReturnType, result);
+        }
+
+        fn releaseBufferViews(zig_args: *ArgsTuple(params)) void {
+            inline for (0..params.len) |i| {
+                const ParamType = params[i].type.?;
+                const param_info = @typeInfo(ParamType);
+                if (param_info == .@"struct" and @hasDecl(ParamType, "is_buffer_view") and ParamType.is_buffer_view) {
+                    zig_args[i].release();
+                }
+                // Release Path types that hold Python object references
+                if (ParamType == conversion.Path) {
+                    zig_args[i].deinit();
+                }
+            }
+        }
+
+        fn handleReturn(comptime RT: type, result: anytype) ?*PyObject {
+            const rt_info = @typeInfo(RT);
+            if (rt_info == .error_union) {
+                if (result) |value| {
+                    return Conv.toPy(@TypeOf(value), value);
+                } else |err| {
+                    setError(err);
+                    return null;
+                }
+            } else {
+                return Conv.toPy(RT, result);
+            }
+        }
+
+        fn setError(err: anyerror) void {
+            // Don't overwrite an exception already set by Python
+            if (py.PyErr_Occurred() != null) return;
+            const msg = @errorName(err);
+            py.PyErr_SetString(mapErrorToExc(err), msg.ptr);
+        }
+    }.wrapper;
+}
+
+/// Extract the Nth parameter name from a comma-separated string.
+/// e.g., getParamName("entries, ring, flags", 1) -> "ring"
+/// Falls back to "argN" if the index is out of range.
+fn getParamName(comptime names_str: []const u8, comptime idx: usize) []const u8 {
+    comptime {
+        var current_idx: usize = 0;
+        var start: usize = 0;
+        var i: usize = 0;
+
+        while (i <= names_str.len) : (i += 1) {
+            if (i == names_str.len or names_str[i] == ',') {
+                if (current_idx == idx) {
+                    var s = start;
+                    var e = i;
+                    while (s < e and names_str[s] == ' ') s += 1;
+                    while (e > s and names_str[e - 1] == ' ') e -= 1;
+                    return names_str[s..e];
+                }
+                current_idx += 1;
+                start = i + 1;
+            }
+        }
+        return std.fmt.comptimePrint("arg{d}", .{idx});
+    }
 }
 
 // ============================================================================
