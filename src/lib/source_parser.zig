@@ -15,31 +15,43 @@
 
 const std = @import("std");
 
+/// Parsed declaration info collected in a single tokenization pass.
+const DeclInfo = struct {
+    name: []const u8,
+    doc: ?[]const u8,
+    params: ?[]const u8,
+    scope: ?[]const u8, // null for top-level, struct name for methods
+};
+
 /// Create a comptime source info type from an embedded source string.
 /// Provides lookup functions for parameter names, doc comments, and module docs.
+/// All declarations are parsed in a single tokenization pass for performance.
 pub fn SourceInfo(comptime source: [:0]const u8) type {
+    // Single-pass parse — computed once per unique source string
+    const all_decls = comptime parseAllDecls(source);
+
     return struct {
         /// File-level doc comment (//! lines at top of file).
         pub const module_doc: ?[]const u8 = parseModuleDoc(source);
 
         /// Look up function parameter names: "add" -> "a, b"
         pub fn getParamNames(comptime func_name: []const u8) ?[]const u8 {
-            return parseFuncParams(source, func_name, null);
+            return lookupParams(all_decls, func_name, null);
         }
 
         /// Look up doc comment for a top-level declaration: "add" -> "Add two integers together."
         pub fn getDoc(comptime name: []const u8) ?[]const u8 {
-            return parseDeclDoc(source, name, null);
+            return lookupDoc(all_decls, name, null);
         }
 
         /// Look up doc comment for a method inside a struct: "Vec2", "magnitude" -> "Compute the magnitude."
         pub fn getMethodDoc(comptime struct_name: []const u8, comptime method_name: []const u8) ?[]const u8 {
-            return parseDeclDoc(source, method_name, struct_name);
+            return lookupDoc(all_decls, method_name, struct_name);
         }
 
         /// Look up method parameter names: "Vec2", "dot" -> "other" (self is skipped)
         pub fn getMethodParams(comptime struct_name: []const u8, comptime method_name: []const u8) ?[]const u8 {
-            return parseFuncParams(source, method_name, struct_name);
+            return lookupParams(all_decls, method_name, struct_name);
         }
     };
 }
@@ -54,11 +66,6 @@ const Tokenizer = std.zig.Tokenizer;
 /// Extract the text of a token from the source buffer.
 fn tokenSlice(source: [:0]const u8, tok: Token) []const u8 {
     return source[tok.loc.start..tok.loc.end];
-}
-
-/// Advance tokenizer and return the next token.
-fn nextToken(tok: *Tokenizer) Token {
-    return tok.next();
 }
 
 // =============================================================================
@@ -104,46 +111,50 @@ fn parseModuleDoc(comptime source: [:0]const u8) ?[]const u8 {
 }
 
 // =============================================================================
-// Declaration Doc Parser (/// comments)
+// Single-Pass Declaration Parser
 // =============================================================================
 
-/// Parse `///` doc comment for a declaration (function or const).
-/// If `struct_scope` is non-null, look inside that struct for the declaration.
-fn parseDeclDoc(comptime source: [:0]const u8, comptime name: []const u8, comptime struct_scope: ?[]const u8) ?[]const u8 {
+/// Parse all declarations from source in a single tokenization pass.
+/// Collects doc comments, parameter names, and struct scope for each pub decl.
+/// Handles `pub fn`, `pub inline fn`, `pub const`, and methods inside structs.
+fn parseAllDecls(comptime source: [:0]const u8) []const DeclInfo {
     @setEvalBranchQuota(std.math.maxInt(u32));
     comptime {
         var tokenizer = Tokenizer.init(source);
+        var decls: [4096]DeclInfo = undefined;
+        var count: usize = 0;
 
-        // If we need to find inside a struct, first navigate to the struct scope
-        if (struct_scope) |sname| {
-            if (!enterStructScope(&tokenizer, source, sname)) return null;
-        }
-
-        // Now scan for doc comments followed by the target declaration
         var doc_accum: []const u8 = "";
         var has_doc = false;
-        const brace_limit: ?usize = if (struct_scope != null) 1 else null;
-        var brace_depth: usize = if (struct_scope != null) 1 else 0;
+        var brace_depth: usize = 0;
+
+        // Struct scope tracking
+        var scope_name: ?[]const u8 = null;
+        var scope_depth: usize = 0;
 
         while (true) {
             const tok = tokenizer.next();
-
             if (tok.tag == .eof) break;
 
-            // Track brace depth when inside a struct scope
+            // Track braces
             if (tok.tag == .l_brace) {
                 brace_depth += 1;
+                if (has_doc) {
+                    doc_accum = "";
+                    has_doc = false;
+                }
                 continue;
             }
             if (tok.tag == .r_brace) {
-                if (brace_depth == 0) break;
-                brace_depth -= 1;
-                if (brace_limit) |bl| {
-                    if (brace_depth < bl) break; // Left the struct scope
+                if (brace_depth > 0) brace_depth -= 1;
+                // Left the struct scope?
+                if (scope_name != null and brace_depth < scope_depth) {
+                    scope_name = null;
                 }
                 continue;
             }
 
+            // Accumulate doc comments
             if (tok.tag == .doc_comment) {
                 const line = source[tok.loc.start..tok.loc.end];
                 const stripped = stripDocPrefix(line, "///");
@@ -156,91 +167,117 @@ fn parseDeclDoc(comptime source: [:0]const u8, comptime name: []const u8, compti
                 continue;
             }
 
-            // Check if this is `pub fn <name>` or `pub const <name>`
-            if (tok.tag == .keyword_pub and has_doc) {
-                const next_tok = tokenizer.next();
-                if (next_tok.tag == .keyword_fn or next_tok.tag == .keyword_const) {
+            // Check for pub declarations
+            if (tok.tag == .keyword_pub) {
+                var next_tok = tokenizer.next();
+
+                // Skip inline/noinline/export keywords between pub and fn/const
+                while (next_tok.tag == .keyword_inline or
+                    next_tok.tag == .keyword_noinline or
+                    next_tok.tag == .keyword_export)
+                {
+                    next_tok = tokenizer.next();
+                }
+
+                if (next_tok.tag == .keyword_fn) {
                     const ident = tokenizer.next();
                     if (ident.tag == .identifier) {
-                        const ident_name = tokenSlice(source, ident);
-                        if (std.mem.eql(u8, ident_name, name)) {
-                            return doc_accum;
+                        const name = tokenSlice(source, ident);
+                        const lparen = tokenizer.next();
+                        var params: ?[]const u8 = null;
+                        if (lparen.tag == .l_paren) {
+                            params = extractParamNames(&tokenizer, source, scope_name != null);
+                        }
+                        decls[count] = .{
+                            .name = name,
+                            .doc = if (has_doc) doc_accum else null,
+                            .params = params,
+                            .scope = scope_name,
+                        };
+                        count += 1;
+                    }
+                } else if (next_tok.tag == .keyword_const) {
+                    const ident = tokenizer.next();
+                    if (ident.tag == .identifier) {
+                        const name = tokenSlice(source, ident);
+                        // Check for `= struct {` pattern
+                        const eq = tokenizer.next();
+                        if (eq.tag == .equal) {
+                            const after_eq = tokenizer.next();
+                            if (after_eq.tag == .keyword_struct) {
+                                const lbrace = tokenizer.next();
+                                if (lbrace.tag == .l_brace) {
+                                    // Record the struct const with its doc
+                                    decls[count] = .{
+                                        .name = name,
+                                        .doc = if (has_doc) doc_accum else null,
+                                        .params = null,
+                                        .scope = scope_name,
+                                    };
+                                    count += 1;
+                                    // Enter struct scope
+                                    brace_depth += 1;
+                                    scope_name = name;
+                                    scope_depth = brace_depth;
+                                }
+                            } else {
+                                // Regular `pub const name = <expr>` (not a struct)
+                                decls[count] = .{
+                                    .name = name,
+                                    .doc = if (has_doc) doc_accum else null,
+                                    .params = null,
+                                    .scope = scope_name,
+                                };
+                                count += 1;
+                            }
+                        } else {
+                            // `pub const name: type` or similar
+                            decls[count] = .{
+                                .name = name,
+                                .doc = if (has_doc) doc_accum else null,
+                                .params = null,
+                                .scope = scope_name,
+                            };
+                            count += 1;
                         }
                     }
                 }
-                // Not our target — reset doc accumulator
+
                 doc_accum = "";
                 has_doc = false;
                 continue;
             }
 
-            // Any non-doc-comment, non-pub token resets the accumulator
+            // Any other token resets doc accumulator
             if (has_doc) {
                 doc_accum = "";
                 has_doc = false;
             }
         }
 
-        return null;
+        const final = decls[0..count].*;
+        return &final;
     }
 }
 
-// =============================================================================
-// Function Parameter Parser
-// =============================================================================
-
-/// Parse parameter names from a function signature.
-/// If `struct_scope` is non-null, look inside that struct.
-/// Returns comma-separated names, e.g., "a, b, c".
-/// For methods, the self parameter is automatically skipped.
-fn parseFuncParams(comptime source: [:0]const u8, comptime func_name: []const u8, comptime struct_scope: ?[]const u8) ?[]const u8 {
-    @setEvalBranchQuota(std.math.maxInt(u32));
-    comptime {
-        var tokenizer = Tokenizer.init(source);
-
-        // If we need to find inside a struct, first navigate to the struct scope
-        if (struct_scope) |sname| {
-            if (!enterStructScope(&tokenizer, source, sname)) return null;
-        }
-
-        const brace_limit: ?usize = if (struct_scope != null) 1 else null;
-        var brace_depth: usize = if (struct_scope != null) 1 else 0;
-
-        // Scan for `fn <func_name>(`
-        while (true) {
-            const tok = tokenizer.next();
-            if (tok.tag == .eof) break;
-
-            // Track brace depth
-            if (tok.tag == .l_brace) {
-                brace_depth += 1;
-                continue;
-            }
-            if (tok.tag == .r_brace) {
-                if (brace_depth == 0) break;
-                brace_depth -= 1;
-                if (brace_limit) |bl| {
-                    if (brace_depth < bl) break;
-                }
-                continue;
-            }
-
-            if (tok.tag == .keyword_fn) {
-                const ident = tokenizer.next();
-                if (ident.tag == .identifier) {
-                    const ident_name = tokenSlice(source, ident);
-                    if (std.mem.eql(u8, ident_name, func_name)) {
-                        const lparen = tokenizer.next();
-                        if (lparen.tag == .l_paren) {
-                            return extractParamNames(&tokenizer, source, struct_scope != null);
-                        }
-                    }
-                }
-            }
-        }
-
-        return null;
+/// Look up a doc comment from the cached declarations.
+fn lookupDoc(comptime all: []const DeclInfo, comptime name: []const u8, comptime scope: ?[]const u8) ?[]const u8 {
+    for (all) |d| {
+        if (!std.mem.eql(u8, d.name, name)) continue;
+        if (scope == null and d.scope == null) return d.doc;
+        if (scope != null and d.scope != null and std.mem.eql(u8, scope.?, d.scope.?)) return d.doc;
     }
+    return null;
+}
+
+/// Look up parameter names from the cached declarations.
+fn lookupParams(comptime all: []const DeclInfo, comptime name: []const u8, comptime scope: ?[]const u8) ?[]const u8 {
+    for (all) |d| {
+        if (!std.mem.eql(u8, d.name, name)) continue;
+        if (scope == null and d.scope == null) return d.params;
+        if (scope != null and d.scope != null and std.mem.eql(u8, scope.?, d.scope.?)) return d.params;
+    }
+    return null;
 }
 
 /// Extract parameter names from inside a function's parameter list.
@@ -334,58 +371,6 @@ fn extractParamNames(tokenizer: *Tokenizer, source: [:0]const u8, comptime is_me
 
         if (param_count > 0) return result;
         return null;
-    }
-}
-
-// =============================================================================
-// Struct Scope Navigation
-// =============================================================================
-
-/// Advance the tokenizer to inside a struct definition: `<name> = struct {`.
-/// Looks for `pub const <name> = struct {` at the top level.
-/// Returns true if found, false if not found.
-fn enterStructScope(tokenizer: *Tokenizer, source: [:0]const u8, comptime struct_name: []const u8) bool {
-    @setEvalBranchQuota(std.math.maxInt(u32));
-    comptime {
-        var brace_depth: usize = 0;
-
-        while (true) {
-            const tok = tokenizer.next();
-            if (tok.tag == .eof) return false;
-
-            if (tok.tag == .l_brace) {
-                brace_depth += 1;
-                continue;
-            }
-            if (tok.tag == .r_brace) {
-                if (brace_depth > 0) brace_depth -= 1;
-                continue;
-            }
-
-            // Only look at top-level declarations
-            if (brace_depth > 0) continue;
-
-            // Look for: pub const <struct_name> = struct {
-            if (tok.tag == .keyword_pub) {
-                const t1 = tokenizer.next();
-                if (t1.tag == .keyword_const) {
-                    const t2 = tokenizer.next();
-                    if (t2.tag == .identifier and std.mem.eql(u8, tokenSlice(source, t2), struct_name)) {
-                        const t3 = tokenizer.next();
-                        if (t3.tag == .equal) {
-                            const t4 = tokenizer.next();
-                            if (t4.tag == .keyword_struct) {
-                                const t5 = tokenizer.next();
-                                if (t5.tag == .l_brace) {
-                                    // We're now inside the struct
-                                    return true;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
     }
 }
 
