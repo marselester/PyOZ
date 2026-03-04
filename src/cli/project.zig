@@ -461,7 +461,7 @@ const pyproject_package_template =
     \\# Path to your Zig source file
     \\module-path = "src/lib.zig"
     \\
-    \\# Native module name (underscore prefix for package layout)
+    \\# Native module name (underscore prefix is optional for package layout)
     \\module-name = "_{[name]s}"
     \\
     \\# Python package directory to include in the wheel
@@ -556,6 +556,10 @@ const build_zig_template =
     \\        },
     \\    });
     \\
+    \\    // To add custom C include paths or link objects, add them to user_lib_mod:
+    \\    //   user_lib_mod.addIncludePath(b.path("vendor/include"));
+    \\    //   user_lib_mod.addObjectFile(b.path("vendor/libfoo.a"));
+    \\
     \\    // Generate a bridge module that forces analysis of all pub decls in the
     \\    // user's code. This triggers @export inside pyoz.module() so the PyInit_
     \\    // function is automatically created — no manual boilerplate needed.
@@ -644,6 +648,10 @@ const build_zig_package_template =
     \\        },
     \\    });
     \\
+    \\    // To add custom C include paths or link objects, add them to user_lib_mod:
+    \\    //   user_lib_mod.addIncludePath(b.path("vendor/include"));
+    \\    //   user_lib_mod.addObjectFile(b.path("vendor/libfoo.a"));
+    \\
     \\    // Generate a bridge module that forces analysis of all pub decls in the
     \\    // user's code. This triggers @export inside pyoz.module() so the PyInit_
     \\    // function is automatically created — no manual boilerplate needed.
@@ -667,7 +675,7 @@ const build_zig_package_template =
     \\    });
     \\
     \\    // Build the Python extension as a dynamic library
-    \\    // Note: underscore prefix separates the .so from the Python package directory
+    \\    // The underscore prefix is optional; it separates the .so from the Python package directory
     \\    const lib = b.addLibrary(.{
     \\        .name = "_{[name]s}",
     \\        .linkage = .dynamic,

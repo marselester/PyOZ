@@ -118,13 +118,10 @@ fn createWheelZip(
     var z = try zip.ZipWriter.init(allocator, wheel_path);
     defer z.deinit();
 
-    // Detect package mode: module name starts with '_' and a py-package matches project name
+    // Detect package mode: py-packages contains project name
     const is_package_mode = blk: {
-        const mod_name = config.getModuleName();
-        if (mod_name.len > 0 and mod_name[0] == '_') {
-            for (config.py_packages.items) |pkg| {
-                if (std.mem.eql(u8, pkg, config.name)) break :blk true;
-            }
+        for (config.py_packages.items) |pkg| {
+            if (std.mem.eql(u8, pkg, config.name)) break :blk true;
         }
         break :blk false;
     };

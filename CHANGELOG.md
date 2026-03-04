@@ -5,6 +5,12 @@ All notable changes to PyOZ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.1] - 2026-03-04
+
+### Fixed
+- **Package mode no longer requires underscore prefix in `module-name`** — Package layout detection now uses `py-packages` containing the project name, instead of requiring the module name to start with `_`. Users can now use `module-name = "liburing"` with `py-packages = ["liburing"]` and `from .liburing import *` in `__init__.py`. The underscore convention still works but is no longer required. Affects `pyoz develop`, `pyoz build`, `pyoz test`, `pyoz bench`, and wheel building.
+- **`build.zig` templates now include guidance for custom C include paths** — The generated `build.zig` includes comments showing that `addIncludePath` and `addObjectFile` must be added to `user_lib_mod`, not `lib.root_module` (which is the bridge module in 0.12.0). This prevents `@cImport` failures when wrapping C libraries.
+
 ## [0.12.0] - 2026-03-01
 
 ### Added
