@@ -22,8 +22,8 @@ pub fn MethodBuilder(comptime class_name: [*:0]const u8, comptime T: type, compt
     return struct {
         const Self = @This();
 
-        // Source text for comptime source parsing (looked up from class_infos)
-        const class_source: ?[:0]const u8 = class_mod.lookupSourceText(class_infos, T);
+        // Pre-parsed source data for comptime source parsing (looked up from class_infos)
+        const class_source: ?source_parser.ParsedSource = class_mod.lookupParsedSource(class_infos, T);
         const class_struct_name: []const u8 = std.mem.span(class_name);
 
         // ====================================================================
@@ -197,8 +197,7 @@ pub fn MethodBuilder(comptime class_name: [*:0]const u8, comptime T: type, compt
             }
             // Fall back to source-parsed /// doc comment
             if (class_source) |src| {
-                const Info = source_parser.SourceInfo(src);
-                if (Info.getMethodDoc(class_struct_name, method_name)) |doc| {
+                if (source_parser.getMethodDoc(src, class_struct_name, method_name)) |doc| {
                     return class_mod.comptimeStrZ(doc);
                 }
             }
@@ -214,8 +213,7 @@ pub fn MethodBuilder(comptime class_name: [*:0]const u8, comptime T: type, compt
             }
             // Fall back to source-parsed parameter names
             if (class_source) |src| {
-                const Info = source_parser.SourceInfo(src);
-                return Info.getMethodParams(class_struct_name, method_name);
+                return source_parser.getMethodParams(src, class_struct_name, method_name);
             }
             return null;
         }

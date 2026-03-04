@@ -952,7 +952,7 @@ fn extractClassInfoWithFrom(
                         .name = from_mod.comptimeStrZ(d.name),
                         .zig_type = ClassType,
                         .parent_zig_type = parent_type,
-                        .source_text = from_mod.resolveSource(entry),
+                        .parsed_source = from_mod.resolveParsedSource(entry),
                     };
                     from_idx += 1;
                 }

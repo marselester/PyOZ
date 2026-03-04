@@ -16,44 +16,46 @@
 const std = @import("std");
 
 /// Parsed declaration info collected in a single tokenization pass.
-const DeclInfo = struct {
+pub const DeclInfo = struct {
     name: []const u8,
     doc: ?[]const u8,
     params: ?[]const u8,
     scope: ?[]const u8, // null for top-level, struct name for methods
 };
 
-/// Create a comptime source info type from an embedded source string.
-/// Provides lookup functions for parameter names, doc comments, and module docs.
-/// All declarations are parsed in a single tokenization pass for performance.
-pub fn SourceInfo(comptime source: [:0]const u8) type {
-    // Single-pass parse — computed once per unique source string
-    const all_decls = comptime parseAllDecls(source);
+/// Pre-parsed source data. Computed once per source file, shared across all lookups.
+pub const ParsedSource = struct {
+    decls: []const DeclInfo,
+    module_doc: ?[]const u8,
+};
 
-    return struct {
-        /// File-level doc comment (//! lines at top of file).
-        pub const module_doc: ?[]const u8 = parseModuleDoc(source);
-
-        /// Look up function parameter names: "add" -> "a, b"
-        pub fn getParamNames(comptime func_name: []const u8) ?[]const u8 {
-            return lookupParams(all_decls, func_name, null);
-        }
-
-        /// Look up doc comment for a top-level declaration: "add" -> "Add two integers together."
-        pub fn getDoc(comptime name: []const u8) ?[]const u8 {
-            return lookupDoc(all_decls, name, null);
-        }
-
-        /// Look up doc comment for a method inside a struct: "Vec2", "magnitude" -> "Compute the magnitude."
-        pub fn getMethodDoc(comptime struct_name: []const u8, comptime method_name: []const u8) ?[]const u8 {
-            return lookupDoc(all_decls, method_name, struct_name);
-        }
-
-        /// Look up method parameter names: "Vec2", "dot" -> "other" (self is skipped)
-        pub fn getMethodParams(comptime struct_name: []const u8, comptime method_name: []const u8) ?[]const u8 {
-            return lookupParams(all_decls, method_name, struct_name);
-        }
+/// Parse a source file into a ParsedSource. Call this once and pass the result
+/// to the lookup functions below.
+pub fn parse(comptime source: [:0]const u8) ParsedSource {
+    return .{
+        .decls = comptime parseAllDecls(source),
+        .module_doc = comptime parseModuleDoc(source),
     };
+}
+
+/// Look up function parameter names: "add" -> "a, b"
+pub fn getParamNames(comptime parsed: ParsedSource, comptime func_name: []const u8) ?[]const u8 {
+    return lookupParams(parsed.decls, func_name, null);
+}
+
+/// Look up doc comment for a top-level declaration: "add" -> "Add two integers together."
+pub fn getDoc(comptime parsed: ParsedSource, comptime name: []const u8) ?[]const u8 {
+    return lookupDoc(parsed.decls, name, null);
+}
+
+/// Look up doc comment for a method inside a struct: "Vec2", "magnitude" -> "Compute the magnitude."
+pub fn getMethodDoc(comptime parsed: ParsedSource, comptime struct_name: []const u8, comptime method_name: []const u8) ?[]const u8 {
+    return lookupDoc(parsed.decls, method_name, struct_name);
+}
+
+/// Look up method parameter names: "Vec2", "dot" -> "other" (self is skipped)
+pub fn getMethodParams(comptime parsed: ParsedSource, comptime struct_name: []const u8, comptime method_name: []const u8) ?[]const u8 {
+    return lookupParams(parsed.decls, method_name, struct_name);
 }
 
 // =============================================================================
@@ -262,6 +264,7 @@ fn parseAllDecls(comptime source: [:0]const u8) []const DeclInfo {
 
 /// Look up a doc comment from the cached declarations.
 fn lookupDoc(comptime all: []const DeclInfo, comptime name: []const u8, comptime scope: ?[]const u8) ?[]const u8 {
+    @setEvalBranchQuota(std.math.maxInt(u32));
     for (all) |d| {
         if (!std.mem.eql(u8, d.name, name)) continue;
         if (scope == null and d.scope == null) return d.doc;
@@ -272,6 +275,7 @@ fn lookupDoc(comptime all: []const DeclInfo, comptime name: []const u8, comptime
 
 /// Look up parameter names from the cached declarations.
 fn lookupParams(comptime all: []const DeclInfo, comptime name: []const u8, comptime scope: ?[]const u8) ?[]const u8 {
+    @setEvalBranchQuota(std.math.maxInt(u32));
     for (all) |d| {
         if (!std.mem.eql(u8, d.name, name)) continue;
         if (scope == null and d.scope == null) return d.params;

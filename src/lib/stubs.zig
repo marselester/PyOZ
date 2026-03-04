@@ -15,6 +15,7 @@
 const std = @import("std");
 const ref_mod = @import("ref.zig");
 const from_mod = @import("from.zig");
+const source_parser_mod = @import("source_parser.zig");
 
 /// How keyword arguments are handled for a function.
 pub const KwargsMode = enum {
@@ -835,9 +836,9 @@ pub fn generateFunctionStub(
 }
 
 /// Generate stub for a class
-pub fn generateClassStub(comptime name: []const u8, comptime T: type, comptime base: ?[]const u8, comptime source_text: ?[:0]const u8) []const u8 {
+pub fn generateClassStub(comptime name: []const u8, comptime T: type, comptime base: ?[]const u8, comptime parsed_source: ?source_parser_mod.ParsedSource) []const u8 {
     comptime {
-        const source_parser = @import("source_parser.zig");
+        const source_parser = source_parser_mod;
         var result: []const u8 = if (base) |b|
             "class " ++ name ++ "(" ++ b ++ "):\n"
         else
@@ -848,9 +849,8 @@ pub fn generateClassStub(comptime name: []const u8, comptime T: type, comptime b
         // Class docstring — emit actual content from __doc__ or source-parsed /// comment
         if (@hasDecl(T, "__doc__")) {
             result = result ++ "    \"\"\"" ++ asSlice(@field(T, "__doc__")) ++ "\"\"\"\n";
-        } else if (source_text) |src| {
-            const Info = source_parser.SourceInfo(src);
-            if (Info.getDoc(name)) |doc| {
+        } else if (parsed_source) |parsed| {
+            if (source_parser.getDoc(parsed, name)) |doc| {
                 result = result ++ "    \"\"\"" ++ doc ++ "\"\"\"\n";
             }
         }
@@ -920,16 +920,14 @@ pub fn generateClassStub(comptime name: []const u8, comptime T: type, comptime b
                 // Look up optional method docstring (explicit > source-parsed)
                 const method_doc: ?[]const u8 = if (@hasDecl(T, decl.name ++ "__doc__"))
                     asSlice(@field(T, decl.name ++ "__doc__"))
-                else if (source_text) |src| blk: {
-                    const SrcInfo = source_parser.SourceInfo(src);
-                    break :blk SrcInfo.getMethodDoc(name, decl.name);
+                else if (parsed_source) |parsed| blk: {
+                    break :blk source_parser.getMethodDoc(parsed, name, decl.name);
                 } else null;
                 // Look up optional method param names (explicit > source-parsed)
                 const method_params: ?[]const u8 = if (@hasDecl(T, decl.name ++ "__params__"))
                     asSlice(@field(T, decl.name ++ "__params__"))
-                else if (source_text) |src| blk: {
-                    const SrcInfo = source_parser.SourceInfo(src);
-                    break :blk SrcInfo.getMethodParams(name, decl.name);
+                else if (parsed_source) |parsed| blk: {
+                    break :blk source_parser.getMethodParams(parsed, name, decl.name);
                 } else null;
                 result = result ++ generateMethodStub(decl.name, DeclType, T, method_doc, method_params);
             }
@@ -1062,9 +1060,8 @@ pub fn generateClassStub(comptime name: []const u8, comptime T: type, comptime b
             const has_explicit_call_params = @hasDecl(T, "__call____params__");
             const call_params_str: []const u8 = if (has_explicit_call_params)
                 asSlice(@field(T, "__call____params__"))
-            else if (source_text) |src| blk: {
-                const CallInfo = source_parser.SourceInfo(src);
-                break :blk CallInfo.getMethodParams(name, "__call__") orelse "";
+            else if (parsed_source) |parsed| blk: {
+                break :blk source_parser.getMethodParams(parsed, name, "__call__") orelse "";
             } else "";
             const has_call_params = call_params_str.len > 0;
             var cidx: usize = 0;
@@ -1446,8 +1443,8 @@ pub fn generateModuleStubs(comptime config: anytype) []const u8 {
                 for (decls) |d| {
                     if (from_mod.shouldExportAsClass(ns, d.name, opts, explicit_names)) {
                         const ClassType = @field(ns, d.name);
-                        const class_src = from_mod.resolveSource(entry);
-                        result = result ++ generateClassStub(d.name, ClassType, null, class_src);
+                        const class_parsed = from_mod.resolveParsedSource(entry);
+                        result = result ++ generateClassStub(d.name, ClassType, null, class_parsed);
                     }
                 }
 

@@ -93,6 +93,7 @@ pub fn withSource(comptime namespace: type, comptime src: [:0]const u8) type {
         pub const _is_pyoz_with_source = true;
         pub const _ws_namespace = namespace;
         pub const _ws_source: [:0]const u8 = src;
+        pub const _ws_parsed: source_parser.ParsedSource = source_parser.parse(src);
     };
 }
 
@@ -243,6 +244,29 @@ pub fn resolveSource(comptime entry: type) ?[:0]const u8 {
     return null;
 }
 
+/// Resolve pre-parsed source data from a `.from` entry.
+/// For withSource() entries, returns the eagerly-parsed data (no re-tokenization).
+/// For __source__ entries, parses on the fly (fallback path).
+pub fn resolveParsedSource(comptime entry: type) ?source_parser.ParsedSource {
+    // withSource() wrapper — has pre-parsed data
+    if (@hasDecl(entry, "_is_pyoz_with_source")) {
+        return entry._ws_parsed;
+    }
+    // source() wrapper — check inner
+    if (@hasDecl(entry, "_is_pyoz_source")) {
+        return resolveParsedSource(entry._source_namespace);
+    }
+    // sub() wrapper — check inner
+    if (@hasDecl(entry, "_is_pyoz_sub")) {
+        return resolveParsedSource(entry._sub_inner);
+    }
+    // Bare namespace — parse on the fly from __source__
+    if (resolveSource(entry)) |src| {
+        return comptime source_parser.parse(src);
+    }
+    return null;
+}
+
 /// Look up the docstring for a declaration in a `.from` entry.
 /// Priority: 1. explicit `{name}__doc__`, 2. `///` from source parsing.
 /// Accepts a `.from` entry type (bare namespace, source(), withSource(), or sub() wrapper).
@@ -269,9 +293,8 @@ pub fn getDocstring(comptime entry: type, comptime name: []const u8) ?[*:0]const
         }
     }
     // 2. Try source parser (/// doc comment)
-    if (resolveSource(entry)) |src| {
-        const Info = source_parser.SourceInfo(src);
-        if (Info.getDoc(name)) |doc| {
+    if (resolveParsedSource(entry)) |parsed| {
+        if (source_parser.getDoc(parsed, name)) |doc| {
             return comptimeStrZ(doc);
         }
     }
@@ -303,9 +326,8 @@ pub fn getNamespaceDoc(comptime entry: type) ?[*:0]const u8 {
         }
     }
     // 2. Try source parser (//! module doc comment)
-    if (resolveSource(entry)) |src| {
-        const Info = source_parser.SourceInfo(src);
-        if (Info.module_doc) |doc| {
+    if (resolveParsedSource(entry)) |parsed| {
+        if (parsed.module_doc) |doc| {
             return comptimeStrZ(doc);
         }
     }
@@ -335,9 +357,8 @@ pub fn getParamNames(comptime entry: type, comptime name: []const u8) ?[]const u
         }
     }
     // 2. Try source parser
-    if (resolveSource(entry)) |src| {
-        const Info = source_parser.SourceInfo(src);
-        return Info.getParamNames(name);
+    if (resolveParsedSource(entry)) |parsed| {
+        return source_parser.getParamNames(parsed, name);
     }
     return null;
 }
@@ -347,9 +368,8 @@ pub fn getParamNames(comptime entry: type, comptime name: []const u8) ?[]const u
 /// Returns null if no source or no doc found.
 /// Accepts a `.from` entry type (bare namespace, source(), withSource(), or sub() wrapper).
 pub fn getClassDoc(comptime entry: type, comptime struct_name: []const u8) ?[*:0]const u8 {
-    if (resolveSource(entry)) |src| {
-        const Info = source_parser.SourceInfo(src);
-        if (Info.getDoc(struct_name)) |doc| {
+    if (resolveParsedSource(entry)) |parsed| {
+        if (source_parser.getDoc(parsed, struct_name)) |doc| {
             return comptimeStrZ(doc);
         }
     }
