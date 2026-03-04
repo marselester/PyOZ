@@ -15,6 +15,18 @@
 const std = @import("std");
 const ref_mod = @import("ref.zig");
 const from_mod = @import("from.zig");
+const source_parser_mod = @import("source_parser.zig");
+
+/// How keyword arguments are handled for a function.
+pub const KwargsMode = enum {
+    /// All parameters are positional-only (METH_VARARGS).
+    positional,
+    /// Named kwargs via pyoz.Args(T) struct (METH_VARARGS | METH_KEYWORDS).
+    args_struct,
+    /// Auto-detected: required params are positional-only, ?T params are keyword-capable
+    /// (METH_VARARGS | METH_KEYWORDS). Used by .from auto-scan.
+    auto_kwargs,
+};
 
 /// Check if a field name indicates a private field (starts with underscore)
 /// Private fields are not exposed to Python as properties or __init__ arguments
@@ -344,7 +356,7 @@ pub fn buildMlDoc(
     comptime name: []const u8,
     comptime Fn: type,
     comptime kind: MethodKind,
-    comptime is_named_kwargs: bool,
+    comptime kwargs_mode: KwargsMode,
     comptime doc: ?[*:0]const u8,
     comptime param_names: ?[]const u8,
 ) [*:0]const u8 {
@@ -362,68 +374,123 @@ pub fn buildMlDoc(
             .static_method => null,
         };
 
-        if (is_named_kwargs) {
-            // Named kwargs: funcname($module, /, field1, field2=None)
-            var need_comma = false;
-            if (hidden) |h| {
-                result = result ++ h ++ ", /";
-                need_comma = true;
-            }
+        switch (kwargs_mode) {
+            .args_struct => {
+                // Named kwargs: funcname($module, /, field1, field2=None)
+                var need_comma = false;
+                if (hidden) |h| {
+                    result = result ++ h ++ ", /";
+                    need_comma = true;
+                }
 
-            if (params.len >= 1) {
-                const ArgsWrapperType = params[0].type.?;
-                if (@typeInfo(ArgsWrapperType) == .@"struct" and @hasDecl(ArgsWrapperType, "ArgsStruct")) {
-                    const ArgsStructType = ArgsWrapperType.ArgsStruct;
-                    const args_fields = @typeInfo(ArgsStructType).@"struct".fields;
+                if (params.len >= 1) {
+                    const ArgsWrapperType = params[0].type.?;
+                    if (@typeInfo(ArgsWrapperType) == .@"struct" and @hasDecl(ArgsWrapperType, "ArgsStruct")) {
+                        const ArgsStructType = ArgsWrapperType.ArgsStruct;
+                        const args_fields = @typeInfo(ArgsStructType).@"struct".fields;
 
-                    for (args_fields) |field| {
-                        if (need_comma) {
-                            result = result ++ ", ";
+                        for (args_fields) |field| {
+                            if (need_comma) {
+                                result = result ++ ", ";
+                            }
+                            result = result ++ field.name;
+                            if (field.default_value_ptr != null or @typeInfo(field.type) == .optional) {
+                                result = result ++ "=None";
+                            }
+                            need_comma = true;
                         }
-                        result = result ++ field.name;
-                        if (field.default_value_ptr != null or @typeInfo(field.type) == .optional) {
+                    }
+                }
+            },
+            .auto_kwargs => {
+                // Auto kwargs: funcname($module, req1, req2, /, opt1=None, opt2=None)
+                var has_any = false;
+                if (hidden) |h| {
+                    result = result ++ h;
+                    has_any = true;
+                }
+
+                const skip: usize = switch (kind) {
+                    .instance_method, .class_method => 1,
+                    .module_func, .static_method => 0,
+                };
+
+                // First pass: required (non-optional) params — positional-only
+                var arg_idx: usize = 0;
+                for (params[skip..]) |param| {
+                    if (param.type) |ptype| {
+                        if (@typeInfo(ptype) != .optional) {
+                            if (has_any) result = result ++ ", ";
+                            if (param_names) |pn| {
+                                result = result ++ getParamName(pn, arg_idx);
+                            } else {
+                                result = result ++ std.fmt.comptimePrint("arg{d}", .{arg_idx});
+                            }
+                            has_any = true;
+                        }
+                        arg_idx += 1;
+                    }
+                }
+
+                // Positional-only separator
+                if (has_any) {
+                    result = result ++ ", /";
+                }
+
+                // Second pass: optional (?T) params — keyword-capable
+                arg_idx = 0;
+                for (params[skip..]) |param| {
+                    if (param.type) |ptype| {
+                        if (@typeInfo(ptype) == .optional) {
+                            result = result ++ ", ";
+                            if (param_names) |pn| {
+                                result = result ++ getParamName(pn, arg_idx);
+                            } else {
+                                result = result ++ std.fmt.comptimePrint("arg{d}", .{arg_idx});
+                            }
                             result = result ++ "=None";
                         }
-                        need_comma = true;
+                        arg_idx += 1;
                     }
                 }
-            }
-        } else {
-            // Regular positional: funcname($module, arg0, arg1, /)
-            var has_any = false;
-            if (hidden) |h| {
-                result = result ++ h;
-                has_any = true;
-            }
-
-            // Skip self/cls parameter for instance/class methods
-            const skip: usize = switch (kind) {
-                .instance_method, .class_method => 1,
-                .module_func, .static_method => 0,
-            };
-
-            var arg_idx: usize = 0;
-            for (params[skip..]) |param| {
-                if (param.type) |ptype| {
-                    if (has_any) result = result ++ ", ";
-                    if (param_names) |pn| {
-                        result = result ++ getParamName(pn, arg_idx);
-                    } else {
-                        result = result ++ std.fmt.comptimePrint("arg{d}", .{arg_idx});
-                    }
-                    // Mark optional parameters
-                    if (@typeInfo(ptype) == .optional) {
-                        result = result ++ "=None";
-                    }
+            },
+            .positional => {
+                // Regular positional: funcname($module, arg0, arg1, /)
+                var has_any = false;
+                if (hidden) |h| {
+                    result = result ++ h;
                     has_any = true;
-                    arg_idx += 1;
                 }
-            }
 
-            // Mark as positional-only (trailing /)
-            if (has_any) {
-                result = result ++ ", /";
-            }
+                // Skip self/cls parameter for instance/class methods
+                const skip: usize = switch (kind) {
+                    .instance_method, .class_method => 1,
+                    .module_func, .static_method => 0,
+                };
+
+                var arg_idx: usize = 0;
+                for (params[skip..]) |param| {
+                    if (param.type) |ptype| {
+                        if (has_any) result = result ++ ", ";
+                        if (param_names) |pn| {
+                            result = result ++ getParamName(pn, arg_idx);
+                        } else {
+                            result = result ++ std.fmt.comptimePrint("arg{d}", .{arg_idx});
+                        }
+                        // Mark optional parameters
+                        if (@typeInfo(ptype) == .optional) {
+                            result = result ++ "=None";
+                        }
+                        has_any = true;
+                        arg_idx += 1;
+                    }
+                }
+
+                // Mark as positional-only (trailing /)
+                if (has_any) {
+                    result = result ++ ", /";
+                }
+            },
         }
 
         result = result ++ ")\n--\n\n";
@@ -493,7 +560,7 @@ pub fn generateImports(comptime config: anytype) []const u8 {
         var needs_numpy = false;
 
         // Check functions
-        const funcs = config.funcs;
+        const funcs = if (@hasField(@TypeOf(config), "funcs")) config.funcs else &.{};
         for (funcs) |f| {
             const func_imports = detectImportsForFunc(@TypeOf(f.func));
             needs_datetime = needs_datetime or func_imports.datetime;
@@ -622,7 +689,7 @@ pub fn generateFunctionStub(
     comptime name: []const u8,
     comptime Fn: type,
     comptime doc: ?[]const u8,
-    comptime is_named_kwargs: bool,
+    comptime kwargs_mode: KwargsMode,
     comptime param_names: ?[]const u8,
 ) []const u8 {
     comptime {
@@ -630,55 +697,115 @@ pub fn generateFunctionStub(
         const fn_info = @typeInfo(Fn).@"fn";
         const params = fn_info.params;
 
-        if (is_named_kwargs and params.len == 1) {
-            // Named kwargs - expand the Args struct
-            const ArgsWrapperType = params[0].type.?;
-            if (@typeInfo(ArgsWrapperType) == .@"struct" and @hasDecl(ArgsWrapperType, "ArgsStruct")) {
-                const ArgsStructType = ArgsWrapperType.ArgsStruct;
-                const args_fields = @typeInfo(ArgsStructType).@"struct".fields;
+        switch (kwargs_mode) {
+            .args_struct => {
+                if (params.len == 1) {
+                    // Named kwargs - expand the Args struct
+                    const ArgsWrapperType = params[0].type.?;
+                    if (@typeInfo(ArgsWrapperType) == .@"struct" and @hasDecl(ArgsWrapperType, "ArgsStruct")) {
+                        const ArgsStructType = ArgsWrapperType.ArgsStruct;
+                        const args_fields = @typeInfo(ArgsStructType).@"struct".fields;
 
-                var first = true;
-                for (args_fields) |field| {
-                    if (!first) {
-                        result = result ++ ", ";
-                    }
-                    first = false;
+                        var first = true;
+                        for (args_fields) |field| {
+                            if (!first) {
+                                result = result ++ ", ";
+                            }
+                            first = false;
 
-                    result = result ++ field.name ++ ": ";
+                            result = result ++ field.name ++ ": ";
 
-                    // Check if optional
-                    const field_info = @typeInfo(field.type);
-                    if (field_info == .optional) {
-                        result = result ++ zigTypeToPython(field_info.optional.child) ++ " | None";
-                    } else {
-                        result = result ++ zigTypeToPython(field.type);
-                    }
+                            // Check if optional
+                            const field_info = @typeInfo(field.type);
+                            if (field_info == .optional) {
+                                result = result ++ zigTypeToPython(field_info.optional.child) ++ " | None";
+                            } else {
+                                result = result ++ zigTypeToPython(field.type);
+                            }
 
-                    // Check for default value
-                    if (field.default_value_ptr != null) {
-                        result = result ++ " = ...";
-                    } else if (field_info == .optional) {
-                        result = result ++ " = None";
+                            // Check for default value
+                            if (field.default_value_ptr != null) {
+                                result = result ++ " = ...";
+                            } else if (field_info == .optional) {
+                                result = result ++ " = None";
+                            }
+                        }
                     }
                 }
-            }
-        } else {
-            // Regular positional arguments
-            var arg_idx: usize = 0;
-            for (params) |param| {
-                if (param.type) |ptype| {
-                    if (arg_idx > 0) {
-                        result = result ++ ", ";
+            },
+            .auto_kwargs => {
+                // Auto kwargs: required params positional, ?T params keyword-capable
+                // def func(req1: int, req2: str, /, *, opt1: int | None = None) -> ...
+                var has_required = false;
+                var arg_idx: usize = 0;
+
+                // First: required (non-optional) params
+                for (params) |param| {
+                    if (param.type) |ptype| {
+                        if (@typeInfo(ptype) != .optional) {
+                            if (has_required or arg_idx > 0) result = result ++ ", ";
+                            const pname = if (param_names) |pn|
+                                getParamName(pn, arg_idx)
+                            else
+                                std.fmt.comptimePrint("arg{d}", .{arg_idx});
+                            result = result ++ pname ++ ": " ++ zigTypeToPython(ptype);
+                            has_required = true;
+                        }
+                        arg_idx += 1;
+                    }
+                }
+
+                // Positional-only separator + keyword section
+                var has_optional = false;
+                for (params) |param| {
+                    if (param.type) |ptype| {
+                        if (@typeInfo(ptype) == .optional) {
+                            has_optional = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (has_optional) {
+                    if (has_required) {
+                        result = result ++ ", /";
                     }
 
-                    const pname = if (param_names) |pn|
-                        getParamName(pn, arg_idx)
-                    else
-                        std.fmt.comptimePrint("arg{d}", .{arg_idx});
-                    result = result ++ pname ++ ": " ++ zigTypeToPython(ptype);
-                    arg_idx += 1;
+                    arg_idx = 0;
+                    for (params) |param| {
+                        if (param.type) |ptype| {
+                            if (@typeInfo(ptype) == .optional) {
+                                result = result ++ ", ";
+                                const pname = if (param_names) |pn|
+                                    getParamName(pn, arg_idx)
+                                else
+                                    std.fmt.comptimePrint("arg{d}", .{arg_idx});
+                                const inner_type = @typeInfo(ptype).optional.child;
+                                result = result ++ pname ++ ": " ++ zigTypeToPython(inner_type) ++ " | None = None";
+                            }
+                            arg_idx += 1;
+                        }
+                    }
                 }
-            }
+            },
+            .positional => {
+                // Regular positional arguments
+                var arg_idx: usize = 0;
+                for (params) |param| {
+                    if (param.type) |ptype| {
+                        if (arg_idx > 0) {
+                            result = result ++ ", ";
+                        }
+
+                        const pname = if (param_names) |pn|
+                            getParamName(pn, arg_idx)
+                        else
+                            std.fmt.comptimePrint("arg{d}", .{arg_idx});
+                        result = result ++ pname ++ ": " ++ zigTypeToPython(ptype);
+                        arg_idx += 1;
+                    }
+                }
+            },
         }
 
         result = result ++ ") -> ";
@@ -709,9 +836,9 @@ pub fn generateFunctionStub(
 }
 
 /// Generate stub for a class
-pub fn generateClassStub(comptime name: []const u8, comptime T: type, comptime base: ?[]const u8, comptime source_text: ?[:0]const u8) []const u8 {
+pub fn generateClassStub(comptime name: []const u8, comptime T: type, comptime base: ?[]const u8, comptime parsed_source: ?source_parser_mod.ParsedSource) []const u8 {
     comptime {
-        const source_parser = @import("source_parser.zig");
+        const source_parser = source_parser_mod;
         var result: []const u8 = if (base) |b|
             "class " ++ name ++ "(" ++ b ++ "):\n"
         else
@@ -722,9 +849,8 @@ pub fn generateClassStub(comptime name: []const u8, comptime T: type, comptime b
         // Class docstring — emit actual content from __doc__ or source-parsed /// comment
         if (@hasDecl(T, "__doc__")) {
             result = result ++ "    \"\"\"" ++ asSlice(@field(T, "__doc__")) ++ "\"\"\"\n";
-        } else if (source_text) |src| {
-            const Info = source_parser.SourceInfo(src);
-            if (Info.getDoc(name)) |doc| {
+        } else if (parsed_source) |parsed| {
+            if (source_parser.getDoc(parsed, name)) |doc| {
                 result = result ++ "    \"\"\"" ++ doc ++ "\"\"\"\n";
             }
         }
@@ -794,16 +920,14 @@ pub fn generateClassStub(comptime name: []const u8, comptime T: type, comptime b
                 // Look up optional method docstring (explicit > source-parsed)
                 const method_doc: ?[]const u8 = if (@hasDecl(T, decl.name ++ "__doc__"))
                     asSlice(@field(T, decl.name ++ "__doc__"))
-                else if (source_text) |src| blk: {
-                    const SrcInfo = source_parser.SourceInfo(src);
-                    break :blk SrcInfo.getMethodDoc(name, decl.name);
+                else if (parsed_source) |parsed| blk: {
+                    break :blk source_parser.getMethodDoc(parsed, name, decl.name);
                 } else null;
                 // Look up optional method param names (explicit > source-parsed)
                 const method_params: ?[]const u8 = if (@hasDecl(T, decl.name ++ "__params__"))
                     asSlice(@field(T, decl.name ++ "__params__"))
-                else if (source_text) |src| blk: {
-                    const SrcInfo = source_parser.SourceInfo(src);
-                    break :blk SrcInfo.getMethodParams(name, decl.name);
+                else if (parsed_source) |parsed| blk: {
+                    break :blk source_parser.getMethodParams(parsed, name, decl.name);
                 } else null;
                 result = result ++ generateMethodStub(decl.name, DeclType, T, method_doc, method_params);
             }
@@ -936,9 +1060,8 @@ pub fn generateClassStub(comptime name: []const u8, comptime T: type, comptime b
             const has_explicit_call_params = @hasDecl(T, "__call____params__");
             const call_params_str: []const u8 = if (has_explicit_call_params)
                 asSlice(@field(T, "__call____params__"))
-            else if (source_text) |src| blk: {
-                const CallInfo = source_parser.SourceInfo(src);
-                break :blk CallInfo.getMethodParams(name, "__call__") orelse "";
+            else if (parsed_source) |parsed| blk: {
+                break :blk source_parser.getMethodParams(parsed, name, "__call__") orelse "";
             } else "";
             const has_call_params = call_params_str.len > 0;
             var cidx: usize = 0;
@@ -1153,13 +1276,10 @@ pub fn generateEnumStub(comptime name: []const u8, comptime T: type, comptime is
             result = result ++ "(int, Enum):\n";
         }
 
-        // Enum members
+        // Enum members — annotate with type, don't expose values
+        const member_type: []const u8 = if (is_str_enum) "str" else "int";
         for (enum_info.fields) |field| {
-            if (is_str_enum) {
-                result = result ++ "    " ++ field.name ++ " = \"" ++ field.name ++ "\"\n";
-            } else {
-                result = result ++ "    " ++ field.name ++ " = " ++ std.fmt.comptimePrint("{d}", .{field.value}) ++ "\n";
-            }
+            result = result ++ "    " ++ field.name ++ ": " ++ member_type ++ "\n";
         }
 
         result = result ++ "\n";
@@ -1275,14 +1395,14 @@ pub fn generateModuleStubs(comptime config: anytype) []const u8 {
         }
 
         // Functions
-        const funcs = config.funcs;
+        const funcs = if (@hasField(@TypeOf(config), "funcs")) config.funcs else &.{};
         for (funcs) |f| {
-            const is_named = @hasField(@TypeOf(f), "is_named_kwargs") and f.is_named_kwargs;
+            const mode: KwargsMode = if (@hasField(@TypeOf(f), "is_named_kwargs") and f.is_named_kwargs) .args_struct else .positional;
             result = result ++ generateFunctionStub(
                 std.mem.span(f.name),
                 @TypeOf(f.func),
                 if (f.doc) |d| std.mem.span(d) else null,
-                is_named,
+                mode,
                 null,
             );
         }
@@ -1323,8 +1443,8 @@ pub fn generateModuleStubs(comptime config: anytype) []const u8 {
                 for (decls) |d| {
                     if (from_mod.shouldExportAsClass(ns, d.name, opts, explicit_names)) {
                         const ClassType = @field(ns, d.name);
-                        const class_src = from_mod.resolveSource(entry);
-                        result = result ++ generateClassStub(d.name, ClassType, null, class_src);
+                        const class_parsed = from_mod.resolveParsedSource(entry);
+                        result = result ++ generateClassStub(d.name, ClassType, null, class_parsed);
                     }
                 }
 
@@ -1351,14 +1471,19 @@ pub fn generateModuleStubs(comptime config: anytype) []const u8 {
                     if (from_mod.shouldExportAsFunction(ns, d.name, opts, explicit_names)) {
                         const func_val = @field(ns, d.name);
                         const FnType = @TypeOf(func_val);
-                        const is_named = from_mod.isNamedKwargsFunc(FnType);
-                        const doc_val = from_mod.getDocstring(entry, d.name);
                         const from_param_names = from_mod.getParamNames(entry, d.name);
+                        const mode: KwargsMode = if (from_mod.isNamedKwargsFunc(FnType))
+                            .args_struct
+                        else if (from_mod.hasOptionalParams(FnType) and from_param_names != null)
+                            .auto_kwargs
+                        else
+                            .positional;
+                        const doc_val = from_mod.getDocstring(entry, d.name);
                         result = result ++ generateFunctionStub(
                             d.name,
                             FnType,
                             if (doc_val) |dv| std.mem.span(dv) else null,
-                            is_named,
+                            mode,
                             from_param_names,
                         );
                     }
@@ -1380,17 +1505,22 @@ pub fn generateModuleStubs(comptime config: anytype) []const u8 {
                         if (from_mod.shouldExportAsFunction(sub_ns, sd.name, sub_opts, &.{})) {
                             const sfunc = @field(sub_ns, sd.name);
                             const SFnType = @TypeOf(sfunc);
-                            const s_is_named = from_mod.isNamedKwargsFunc(SFnType);
                             const s_doc = from_mod.getDocstring(entry, sd.name);
                             // Generate as staticmethod
                             result = result ++ "    @staticmethod\n";
                             // Indent the function stub
                             const s_params = from_mod.getParamNames(entry, sd.name);
+                            const s_mode: KwargsMode = if (from_mod.isNamedKwargsFunc(SFnType))
+                                .args_struct
+                            else if (from_mod.hasOptionalParams(SFnType) and s_params != null)
+                                .auto_kwargs
+                            else
+                                .positional;
                             const fn_stub = generateFunctionStub(
                                 sd.name,
                                 SFnType,
                                 if (s_doc) |sv| std.mem.span(sv) else null,
-                                s_is_named,
+                                s_mode,
                                 s_params,
                             );
                             // Add 4-space indent to each line

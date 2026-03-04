@@ -394,6 +394,7 @@ pub const wrapFunction = wrappers_mod.wrapFunction;
 pub const wrapFunctionWithClasses = wrappers_mod.wrapFunctionWithClasses;
 pub const wrapFunctionWithNamedKeywords = wrappers_mod.wrapFunctionWithNamedKeywords;
 pub const wrapFunctionWithErrorMapping = wrappers_mod.wrapFunctionWithErrorMapping;
+pub const wrapAutoKeywordFunction = wrappers_mod.wrapAutoKeywordFunction;
 pub const PyCFunctionWithKeywords = wrappers_mod.PyCFunctionWithKeywords;
 pub const FuncDefEntry = wrappers_mod.FuncDefEntry;
 pub const func = wrappers_mod.func;
@@ -951,7 +952,7 @@ fn extractClassInfoWithFrom(
                         .name = from_mod.comptimeStrZ(d.name),
                         .zig_type = ClassType,
                         .parent_zig_type = parent_type,
-                        .source_text = from_mod.resolveSource(entry),
+                        .parsed_source = from_mod.resolveParsedSource(entry),
                     };
                     from_idx += 1;
                 }
@@ -1020,8 +1021,8 @@ fn anyFromFuncUsesDateTime(comptime from_entries: anytype, comptime explicit_nam
 /// Create a Python module from configuration
 pub fn module(comptime config: anytype) type {
     @setEvalBranchQuota(std.math.maxInt(u32));
-    const classes = config.classes;
-    const funcs = config.funcs;
+    const classes = if (@hasField(@TypeOf(config), "classes")) config.classes else &[_]ClassDef{};
+    const funcs = if (@hasField(@TypeOf(config), "funcs")) config.funcs else &.{};
     const exceptions = if (@hasField(@TypeOf(config), "exceptions")) config.exceptions else &[_]ExceptionDef{};
     const num_exceptions = exceptions.len;
     const error_mappings = if (@hasField(@TypeOf(config), "error_mappings")) config.error_mappings else &[_]ErrorMapping{};
@@ -1109,11 +1110,12 @@ pub fn module(comptime config: anytype) type {
             for (funcs, 0..) |f, i| {
                 // Check if this is a keyword-argument function using Args(T)
                 const is_named_kwargs = @hasField(@TypeOf(f), "is_named_kwargs") and f.is_named_kwargs;
+                const kwargs_mode: stubs_mod.KwargsMode = if (is_named_kwargs) .args_struct else .positional;
                 const ml_doc = stubs_mod.buildMlDoc(
                     std.mem.span(f.name),
                     @TypeOf(f.func),
                     .module_func,
-                    is_named_kwargs,
+                    kwargs_mode,
                     f.doc,
                     null,
                 );
@@ -1159,11 +1161,17 @@ pub fn module(comptime config: anytype) type {
                         const FnType = @TypeOf(func_val);
                         const is_named = from_mod.isNamedKwargsFunc(FnType);
                         const param_names = from_mod.getParamNames(entry, d.name);
+                        const has_optional = !is_named and from_mod.hasOptionalParams(FnType);
+                        const is_auto_kwargs = has_optional and param_names != null;
+                        if (has_optional and param_names == null) {
+                            @compileLog("PyOZ .from: function '" ++ d.name ++ "' has ?T optional params but no source text for param names — kwargs won't work. Use pyoz.withSource() or add __source__() / " ++ d.name ++ "__params__ to the namespace.");
+                        }
+                        const kwargs_mode: stubs_mod.KwargsMode = if (is_named) .args_struct else if (is_auto_kwargs) .auto_kwargs else .positional;
                         const ml_doc = stubs_mod.buildMlDoc(
                             d.name,
                             FnType,
                             .module_func,
-                            is_named,
+                            kwargs_mode,
                             doc,
                             param_names,
                         );
@@ -1172,6 +1180,13 @@ pub fn module(comptime config: anytype) type {
                             m[from_idx] = .{
                                 .ml_name = from_mod.comptimeStrZ(d.name),
                                 .ml_meth = @ptrCast(wrapFunctionWithNamedKeywords(func_val, class_infos)),
+                                .ml_flags = py.METH_VARARGS | py.METH_KEYWORDS,
+                                .ml_doc = ml_doc,
+                            };
+                        } else if (is_auto_kwargs) {
+                            m[from_idx] = .{
+                                .ml_name = from_mod.comptimeStrZ(d.name),
+                                .ml_meth = @ptrCast(wrapAutoKeywordFunction(func_val, class_infos, param_names.?)),
                                 .ml_flags = py.METH_VARARGS | py.METH_KEYWORDS,
                                 .ml_doc = ml_doc,
                             };
@@ -1586,11 +1601,17 @@ pub fn module(comptime config: anytype) type {
                                 const sub_func_name = from_mod.comptimeStrZ(sd.name);
                                 const sub_is_named = comptime from_mod.isNamedKwargsFunc(SubFnType);
                                 const sub_param_names = comptime from_mod.getParamNames(entry, sd.name);
+                                const sub_has_optional = comptime !sub_is_named and from_mod.hasOptionalParams(SubFnType);
+                                const sub_is_auto_kwargs = sub_has_optional and sub_param_names != null;
+                                if (sub_has_optional and sub_param_names == null) {
+                                    @compileLog("PyOZ .from: function '" ++ sd.name ++ "' has ?T optional params but no source text for param names — kwargs won't work. Use pyoz.withSource() or add __source__() / " ++ sd.name ++ "__params__ to the namespace.");
+                                }
+                                const sub_kwargs_mode: stubs_mod.KwargsMode = comptime if (sub_is_named) .args_struct else if (sub_is_auto_kwargs) .auto_kwargs else .positional;
                                 const sub_ml_doc = comptime stubs_mod.buildMlDoc(
                                     sd.name,
                                     SubFnType,
                                     .module_func,
-                                    sub_is_named,
+                                    sub_kwargs_mode,
                                     sub_doc,
                                     sub_param_names,
                                 );
@@ -1601,6 +1622,13 @@ pub fn module(comptime config: anytype) type {
                                         break :blk_m py.c.PyMethodDef{
                                             .ml_name = sub_func_name,
                                             .ml_meth = @ptrCast(wrapFunctionWithNamedKeywords(sub_func_val, class_infos)),
+                                            .ml_flags = py.METH_VARARGS | py.METH_KEYWORDS,
+                                            .ml_doc = sub_ml_doc,
+                                        };
+                                    } else if (sub_is_auto_kwargs) {
+                                        break :blk_m py.c.PyMethodDef{
+                                            .ml_name = sub_func_name,
+                                            .ml_meth = @ptrCast(wrapAutoKeywordFunction(sub_func_val, class_infos, sub_param_names.?)),
                                             .ml_flags = py.METH_VARARGS | py.METH_KEYWORDS,
                                             .ml_doc = sub_ml_doc,
                                         };

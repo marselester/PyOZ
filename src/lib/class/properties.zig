@@ -42,8 +42,8 @@ pub fn PropertiesBuilder(comptime T: type, comptime Parent: type, comptime class
     const fields = struct_info.fields;
 
     return struct {
-        // Source text for comptime source parsing (looked up from class_infos)
-        const class_source: ?[:0]const u8 = class_mod.lookupSourceText(class_infos, T);
+        // Pre-parsed source data for comptime source parsing (looked up from class_infos)
+        const class_source: ?source_parser.ParsedSource = class_mod.lookupParsedSource(class_infos, T);
         const class_struct_name: ?[]const u8 = blk: {
             for (class_infos) |info| {
                 if (info.zig_type == T) break :blk std.mem.span(info.name);
@@ -138,8 +138,7 @@ pub fn PropertiesBuilder(comptime T: type, comptime Parent: type, comptime class
             // Fall back to source-parsed /// doc comment above get_<prop_name>
             if (class_source) |src| {
                 if (class_struct_name) |sname| {
-                    const Info = source_parser.SourceInfo(src);
-                    if (Info.getMethodDoc(sname, "get_" ++ prop_name)) |doc| {
+                    if (source_parser.getMethodDoc(src, sname, "get_" ++ prop_name)) |doc| {
                         return class_mod.comptimeStrZ(doc);
                     }
                 }
@@ -148,6 +147,7 @@ pub fn PropertiesBuilder(comptime T: type, comptime Parent: type, comptime class
         }
 
         pub var getset: [total_getset_count]py.PyGetSetDef = blk: {
+            @setEvalBranchQuota(std.math.maxInt(u32));
             var gs: [total_getset_count]py.PyGetSetDef = undefined;
 
             // Field-based getters/setters (skip private fields starting with _ and Ref fields)

@@ -295,14 +295,14 @@ pub const ClassInfo = struct {
     name: [*:0]const u8,
     zig_type: type,
     parent_zig_type: ?type = null,
-    /// Source text for comptime source parsing (only set for .from classes with withSource)
-    source_text: ?[:0]const u8 = null,
+    /// Pre-parsed source data for comptime source parsing (only set for .from classes with withSource)
+    parsed_source: ?source_parser.ParsedSource = null,
 };
 
-/// Look up the source text for a class type from the class info list.
-pub fn lookupSourceText(comptime class_infos: []const ClassInfo, comptime T: type) ?[:0]const u8 {
+/// Look up the pre-parsed source data for a class type from the class info list.
+pub fn lookupParsedSource(comptime class_infos: []const ClassInfo, comptime T: type) ?source_parser.ParsedSource {
     for (class_infos) |info| {
-        if (info.zig_type == T) return info.source_text;
+        if (info.zig_type == T) return info.parsed_source;
     }
     return null;
 }
@@ -570,9 +570,8 @@ fn generateClass(comptime name: [*:0]const u8, comptime T: type, comptime class_
                     @compileError("__doc__ must be declared as [*:0]const u8");
                 }
                 break :blk T.__doc__;
-            } else if (comptime lookupSourceText(class_infos, T)) |src| blk: {
-                const Info = source_parser.SourceInfo(src);
-                if (Info.getDoc(std.mem.span(name))) |doc| {
+            } else if (comptime lookupParsedSource(class_infos, T)) |parsed| blk: {
+                if (source_parser.getDoc(parsed, std.mem.span(name))) |doc| {
                     break :blk comptimeStrZ(doc);
                 }
                 break :blk generateAutoDocWithParent(name, T, is_pyoz_subclass, ParentZigType);
@@ -823,9 +822,8 @@ fn generateClass(comptime name: [*:0]const u8, comptime T: type, comptime class_
                     @compileError("__doc__ must be declared as [*:0]const u8");
                 }
                 break :blk T.__doc__;
-            } else if (comptime lookupSourceText(class_infos, T)) |src| blk: {
-                const Info = source_parser.SourceInfo(src);
-                if (Info.getDoc(std.mem.span(name))) |doc| {
+            } else if (comptime lookupParsedSource(class_infos, T)) |parsed| blk: {
+                if (source_parser.getDoc(parsed, std.mem.span(name))) |doc| {
                     break :blk comptimeStrZ(doc);
                 }
                 break :blk generateAutoDocWithParent(name, T, is_pyoz_subclass, ParentZigType);
