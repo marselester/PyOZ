@@ -107,7 +107,9 @@ pub fn AttributeProtocol(comptime name: [*:0]const u8, comptime T: type, comptim
                         } else {
                             // Convert Python object to Zig type
                             const zig_value = conversion.Converter(class_infos).fromPy(ValueType, value) catch {
-                                py.PyErr_SetString(py.PyExc_TypeError(), "cannot convert value to expected type");
+                                if (py.PyErr_Occurred() == null) {
+                                    py.PyErr_SetString(py.PyExc_TypeError(), "cannot convert value to expected type");
+                                }
                                 return -1;
                             };
                             if (@typeInfo(RetType) == .error_union) {

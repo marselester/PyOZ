@@ -269,7 +269,9 @@ pub fn PropertiesBuilder(comptime T: type, comptime Parent: type, comptime class
                         const setter_info = @typeInfo(SetterType).@"fn";
                         const ValueType = setter_info.params[1].type.?;
                         const converted = conversion.Converter(class_infos).fromPy(ValueType, py_value) catch {
-                            py.PyErr_SetString(py.PyExc_TypeError(), "Failed to convert value for: " ++ field_name);
+                            if (py.PyErr_Occurred() == null) {
+                                py.PyErr_SetString(py.PyExc_TypeError(), "Failed to convert value for: " ++ field_name);
+                            }
                             return -1;
                         };
                         const RetType = unwrapSignature(setter_info.return_type orelse void);
@@ -304,7 +306,9 @@ pub fn PropertiesBuilder(comptime T: type, comptime Parent: type, comptime class
                         return -1;
                     };
                     @field(self.getData().*, field_name) = conversion.Converter(class_infos).fromPy(FieldType, py_value) catch {
-                        py.PyErr_SetString(py.PyExc_TypeError(), "Failed to convert value for: " ++ field_name);
+                        if (py.PyErr_Occurred() == null) {
+                            py.PyErr_SetString(py.PyExc_TypeError(), "Failed to convert value for: " ++ field_name);
+                        }
                         return -1;
                     };
                     return 0;
@@ -343,7 +347,9 @@ pub fn PropertiesBuilder(comptime T: type, comptime Parent: type, comptime class
                     const setter_info = @typeInfo(SetterType).@"fn";
                     const ValueType = setter_info.params[1].type.?;
                     const converted = conversion.Converter(class_infos).fromPy(ValueType, py_value) catch {
-                        py.PyErr_SetString(py.PyExc_TypeError(), "Failed to convert value for property: " ++ prop_name);
+                        if (py.PyErr_Occurred() == null) {
+                            py.PyErr_SetString(py.PyExc_TypeError(), "Failed to convert value for property: " ++ prop_name);
+                        }
                         return -1;
                     };
                     const RetType = unwrapSignature(setter_info.return_type orelse void);
@@ -425,7 +431,9 @@ pub fn PropertiesBuilder(comptime T: type, comptime Parent: type, comptime class
                     const setter_info = @typeInfo(SetterType).@"fn";
                     const ValueType = setter_info.params[1].type.?;
                     const converted = conversion.Converter(class_infos).fromPy(ValueType, py_value) catch {
-                        py.PyErr_SetString(py.PyExc_TypeError(), "Failed to convert value for property: " ++ prop_name);
+                        if (py.PyErr_Occurred() == null) {
+                            py.PyErr_SetString(py.PyExc_TypeError(), "Failed to convert value for property: " ++ prop_name);
+                        }
                         return -1;
                     };
                     const RetType = unwrapSignature(setter_info.return_type orelse void);

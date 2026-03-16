@@ -104,7 +104,9 @@ pub fn DescriptorProtocol(comptime _: [*:0]const u8, comptime T: type, comptime 
                 const SetRetType = unwrapSignature(@typeInfo(SetFn).@"fn".return_type.?);
 
                 const zig_value = Conv.fromPy(ValueType, val) catch {
-                    py.PyErr_SetString(py.PyExc_TypeError(), "invalid value type for descriptor");
+                    if (py.PyErr_Occurred() == null) {
+                        py.PyErr_SetString(py.PyExc_TypeError(), "invalid value type for descriptor");
+                    }
                     return -1;
                 };
 

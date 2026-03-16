@@ -366,8 +366,10 @@ pub fn MethodBuilder(comptime class_name: [*:0]const u8, comptime T: type, compt
 
                     // Build argument tuple for the method call
                     var extra_args = parseMethodArgs(args) catch |err| {
-                        const msg = @errorName(err);
-                        py.PyErr_SetString(py.PyExc_TypeError(), msg.ptr);
+                        if (py.PyErr_Occurred() == null) {
+                            const msg = @errorName(err);
+                            py.PyErr_SetString(py.PyExc_TypeError(), msg.ptr);
+                        }
                         return null;
                     };
                     // Ensure Path arguments are cleaned up after function call
@@ -514,8 +516,10 @@ pub fn MethodBuilder(comptime class_name: [*:0]const u8, comptime T: type, compt
 
                     // Parse all arguments (no self to skip)
                     var zig_args = parseArgs(args) catch |err| {
-                        const msg = @errorName(err);
-                        py.PyErr_SetString(py.PyExc_TypeError(), msg.ptr);
+                        if (py.PyErr_Occurred() == null) {
+                            const msg = @errorName(err);
+                            py.PyErr_SetString(py.PyExc_TypeError(), msg.ptr);
+                        }
                         return null;
                     };
                     // Ensure Path arguments are cleaned up after function call
@@ -622,8 +626,10 @@ pub fn MethodBuilder(comptime class_name: [*:0]const u8, comptime T: type, compt
 
                     // Parse arguments (skip the first `type` parameter)
                     var zig_args = parseArgs(args) catch |err| {
-                        const msg = @errorName(err);
-                        py.PyErr_SetString(py.PyExc_TypeError(), msg.ptr);
+                        if (py.PyErr_Occurred() == null) {
+                            const msg = @errorName(err);
+                            py.PyErr_SetString(py.PyExc_TypeError(), msg.ptr);
+                        }
                         return null;
                     };
                     // Ensure Path arguments are cleaned up after function call

@@ -241,7 +241,9 @@ pub fn LifecycleBuilder(
                 }
 
                 const zig_args = parseNewArgs(py_args, @intCast(arg_count)) catch {
-                    py.PyErr_SetString(py.PyExc_TypeError(), "Failed to convert arguments");
+                    if (py.PyErr_Occurred() == null) {
+                        py.PyErr_SetString(py.PyExc_TypeError(), "Failed to convert arguments");
+                    }
                     return -1;
                 };
 
@@ -263,7 +265,9 @@ pub fn LifecycleBuilder(
                         return -1;
                     };
                     const value = conversion.Converter(class_infos).fromPy(ff.field_type, item) catch {
-                        py.PyErr_SetString(py.PyExc_TypeError(), "Failed to convert argument: " ++ ff.name);
+                        if (py.PyErr_Occurred() == null) {
+                            py.PyErr_SetString(py.PyExc_TypeError(), "Failed to convert argument: " ++ ff.name);
+                        }
                         return -1;
                     };
                     if (ff.is_parent) {
@@ -285,7 +289,9 @@ pub fn LifecycleBuilder(
                         return -1;
                     };
                     @field(data.*, field.name) = conversion.Converter(class_infos).fromPy(field.type, item) catch {
-                        py.PyErr_SetString(py.PyExc_TypeError(), "Failed to convert argument: " ++ field.name);
+                        if (py.PyErr_Occurred() == null) {
+                            py.PyErr_SetString(py.PyExc_TypeError(), "Failed to convert argument: " ++ field.name);
+                        }
                         return -1;
                     };
                     i += 1;

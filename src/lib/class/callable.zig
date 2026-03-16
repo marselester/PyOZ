@@ -23,8 +23,10 @@ pub fn CallableProtocol(comptime _: [*:0]const u8, comptime T: type, comptime Pa
             const self: *Parent.PyWrapper = @ptrCast(@alignCast(self_obj orelse return null));
 
             const extra_args = parseCallArgs(args) catch |err| {
-                const msg = @errorName(err);
-                py.PyErr_SetString(py.PyExc_TypeError(), msg.ptr);
+                if (py.PyErr_Occurred() == null) {
+                    const msg = @errorName(err);
+                    py.PyErr_SetString(py.PyExc_TypeError(), msg.ptr);
+                }
                 return null;
             };
 

@@ -77,10 +77,12 @@ pub fn MappingProtocol(comptime _: [*:0]const u8, comptime T: type, comptime Par
             };
 
             const zig_key = Conv.fromPy(KeyType, key) catch {
-                if (is_integer_key) {
-                    py.PyErr_SetString(py.PyExc_IndexError(), "Invalid index type");
-                } else {
-                    py.PyErr_SetString(py.PyExc_KeyError(), "Invalid key type");
+                if (py.PyErr_Occurred() == null) {
+                    if (is_integer_key) {
+                        py.PyErr_SetString(py.PyExc_IndexError(), "Invalid index type");
+                    } else {
+                        py.PyErr_SetString(py.PyExc_KeyError(), "Invalid key type");
+                    }
                 }
                 return null;
             };
@@ -139,16 +141,20 @@ pub fn MappingProtocol(comptime _: [*:0]const u8, comptime T: type, comptime Par
                 };
 
                 const zig_key = Conv.fromPy(KeyType, key) catch {
-                    if (is_integer_key) {
-                        py.PyErr_SetString(py.PyExc_IndexError(), "Invalid index type");
-                    } else {
-                        py.PyErr_SetString(py.PyExc_KeyError(), "Invalid key type");
+                    if (py.PyErr_Occurred() == null) {
+                        if (is_integer_key) {
+                            py.PyErr_SetString(py.PyExc_IndexError(), "Invalid index type");
+                        } else {
+                            py.PyErr_SetString(py.PyExc_KeyError(), "Invalid key type");
+                        }
                     }
                     return -1;
                 };
 
                 const zig_value = Conv.fromPy(ValueType, value) catch {
-                    py.PyErr_SetString(py.PyExc_TypeError(), "invalid value type for __setitem__");
+                    if (py.PyErr_Occurred() == null) {
+                        py.PyErr_SetString(py.PyExc_TypeError(), "invalid value type for __setitem__");
+                    }
                     return -1;
                 };
 
@@ -192,10 +198,12 @@ pub fn MappingProtocol(comptime _: [*:0]const u8, comptime T: type, comptime Par
                 };
 
                 const zig_key = Conv.fromPy(KeyType, key) catch {
-                    if (is_integer_key) {
-                        py.PyErr_SetString(py.PyExc_IndexError(), "Invalid index type");
-                    } else {
-                        py.PyErr_SetString(py.PyExc_KeyError(), "Invalid key type");
+                    if (py.PyErr_Occurred() == null) {
+                        if (is_integer_key) {
+                            py.PyErr_SetString(py.PyExc_IndexError(), "Invalid index type");
+                        } else {
+                            py.PyErr_SetString(py.PyExc_KeyError(), "Invalid key type");
+                        }
                     }
                     return -1;
                 };

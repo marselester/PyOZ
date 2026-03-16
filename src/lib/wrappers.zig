@@ -393,12 +393,16 @@ pub fn wrapAutoKeywordFunction(
                     } else if (is_optional) {
                         const inner_type = @typeInfo(ParamType).optional.child;
                         zig_args[i] = Conv.fromPy(inner_type, item) catch {
-                            py.PyErr_SetString(py.PyExc_TypeError(), meta.type_err_msg);
+                            if (py.PyErr_Occurred() == null) {
+                                py.PyErr_SetString(py.PyExc_TypeError(), meta.type_err_msg);
+                            }
                             return null;
                         };
                     } else {
                         zig_args[i] = Conv.fromPy(ParamType, item) catch {
-                            py.PyErr_SetString(py.PyExc_TypeError(), meta.type_err_msg);
+                            if (py.PyErr_Occurred() == null) {
+                                py.PyErr_SetString(py.PyExc_TypeError(), meta.type_err_msg);
+                            }
                             return null;
                         };
                     }
@@ -411,7 +415,9 @@ pub fn wrapAutoKeywordFunction(
                             } else {
                                 const inner_type = @typeInfo(ParamType).optional.child;
                                 zig_args[i] = Conv.fromPy(inner_type, item) catch {
-                                    py.PyErr_SetString(py.PyExc_TypeError(), meta.type_err_msg);
+                                    if (py.PyErr_Occurred() == null) {
+                                        py.PyErr_SetString(py.PyExc_TypeError(), meta.type_err_msg);
+                                    }
                                     return null;
                                 };
                             }

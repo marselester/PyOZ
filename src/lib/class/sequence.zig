@@ -165,7 +165,9 @@ pub fn SequenceProtocol(comptime _: [*:0]const u8, comptime T: type, comptime Pa
                 const idx = wrapIndexConst(IndexType, index, self) orelse return -1;
 
                 const zig_value = Conv.fromPy(ValueType, value) catch {
-                    py.PyErr_SetString(py.PyExc_TypeError(), "invalid value type for __setitem__");
+                    if (py.PyErr_Occurred() == null) {
+                        py.PyErr_SetString(py.PyExc_TypeError(), "invalid value type for __setitem__");
+                    }
                     return -1;
                 };
 
