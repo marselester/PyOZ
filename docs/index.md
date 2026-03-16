@@ -21,10 +21,10 @@ hide:
 
 ### Python extensions in Zig, made easy
 
-[![GitHub](https://img.shields.io/github/stars/dzonerzy/PyOZ?style=flat&color=blue)](https://github.com/dzonerzy/PyOZ)
+[![GitHub](https://img.shields.io/github/stars/pyozig/PyOZ?style=flat&color=blue)](https://github.com/pyozig/PyOZ)
 [![Python](https://img.shields.io/badge/python-3.8--3.13-blue)](https://www.python.org/)
 [![Zig](https://img.shields.io/badge/zig-0.15+-orange)](https://ziglang.org/)
-[![License](https://img.shields.io/badge/license-MIT-green)](https://github.com/dzonerzy/PyOZ/blob/main/LICENSE)
+[![License](https://img.shields.io/badge/license-MIT-green)](https://github.com/pyozig/PyOZ/blob/main/LICENSE)
 
 ---
 
@@ -32,7 +32,7 @@ hide:
 Build blazing-fast extensions with zero boilerplate and zero Python C API headaches.
 
 [Get Started](quickstart.md){ .md-button .md-button--primary }
-[View on GitHub](https://github.com/dzonerzy/PyOZ){ .md-button }
+[View on GitHub](https://github.com/pyozig/PyOZ){ .md-button }
 
 </div>
 

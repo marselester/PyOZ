@@ -760,7 +760,7 @@ const build_zig_zon_template =
     \\    .version = "0.1.0",
     \\    .dependencies = .{
     \\        .PyOZ = .{
-    \\            .url = "https://github.com/dzonerzy/PyOZ/archive/refs/tags/v{[pyoz_version]s}.tar.gz",
+    \\            .url = "https://github.com/pyozig/PyOZ/archive/refs/tags/v{[pyoz_version]s}.tar.gz",
     \\            // .hash = "...",
     \\        },
     \\    },
@@ -776,7 +776,7 @@ const build_zig_zon_template =
 const readme_template =
     \\# {[name]s}
     \\
-    \\A Python extension module built with [PyOZ](https://github.com/dzonerzy/PyOZ).
+    \\A Python extension module built with [PyOZ](https://github.com/pyozig/PyOZ).
     \\
     \\## Building
     \\

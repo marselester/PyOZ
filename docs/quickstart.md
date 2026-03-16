@@ -14,12 +14,12 @@ This installs the `pyoz` CLI with prebuilt binaries for all major platforms.
 
 ### Option 2: Download Prebuilt Binaries
 
-Download the latest `pyoz` binary for your platform from the [GitHub Releases](https://github.com/dzonerzy/PyOZ/releases) page and add it to your PATH.
+Download the latest `pyoz` binary for your platform from the [GitHub Releases](https://github.com/pyozig/PyOZ/releases) page and add it to your PATH.
 
 ### Option 3: Build from Source
 
 ```bash
-git clone https://github.com/dzonerzy/PyOZ.git
+git clone https://github.com/pyozig/PyOZ.git
 cd PyOZ
 zig build cli
 ```

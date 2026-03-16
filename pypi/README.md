@@ -2,7 +2,7 @@
 
 **Zig's power meets Python's simplicity.** Build blazing-fast Python extensions with zero boilerplate and zero Python C API headaches.
 
-[Documentation](https://pyoz.dev) | [Getting Started](https://pyoz.dev/quickstart/) | [Examples](https://pyoz.dev/examples/complete-module/) | [GitHub](https://github.com/dzonerzy/PyOZ)
+[Documentation](https://pyoz.dev) | [Getting Started](https://pyoz.dev/quickstart/) | [Examples](https://pyoz.dev/examples/complete-module/) | [GitHub](https://github.com/pyozig/PyOZ)
 
 ## Quick Example
 
@@ -24,7 +24,7 @@ fn add(a: i64, b: i64) i64 {
     return a + b;
 }
 
-const MyModule = pyoz.module(.{
+pub const Module = pyoz.module(.{
     .name = "mymodule",
     .funcs = &.{
         pyoz.func("add", add, "Add two numbers"),
@@ -33,10 +33,6 @@ const MyModule = pyoz.module(.{
         pyoz.class("Point", Point),
     },
 });
-
-pub export fn PyInit_mymodule() ?*pyoz.PyObject {
-    return MyModule.init();
-}
 ```
 
 ```python
