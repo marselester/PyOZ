@@ -49,8 +49,8 @@ description = "My PyOZ module"
 requires-python = ">=3.8"
 
 [build-system]
-requires = ["setuptools", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["pyoz"]
+build-backend = "pyoz.backend"
 ```
 
 ### PyOZ Settings
