@@ -461,6 +461,46 @@ pub fn Converter(comptime class_infos: []const class_mod.ClassInfo) type {
                     return error.TypeError;
                 }
 
+                // Check if T is MemoryView type
+                if (@hasDecl(T, "_is_pyoz_memoryview")) {
+                    if (py.PyMemoryView_Check(obj)) {
+                        var view: py.Py_buffer = undefined;
+                        if (py.PyObject_GetBuffer(obj, &view, py.PyBUF_SIMPLE) != 0) {
+                            return error.ConversionError;
+                        }
+                        const buf_ptr: [*]const u8 = @ptrCast(view.buf orelse {
+                            py.PyBuffer_Release(&view);
+                            return error.ConversionError;
+                        });
+                        return T{ .data = buf_ptr[0..@intCast(view.len)], ._view = view };
+                    }
+                    return error.TypeError;
+                }
+
+                // Check if T is BytesLike type (accepts bytes, bytearray, or memoryview)
+                if (@hasDecl(T, "_is_pyoz_byteslike")) {
+                    if (py.PyBytes_Check(obj)) {
+                        const size = py.PyBytes_Size(obj);
+                        const ptr = py.PyBytes_AsString(obj) orelse return error.ConversionError;
+                        return T{ .data = ptr[0..@intCast(size)] };
+                    } else if (py.PyByteArray_Check(obj)) {
+                        const size = py.PyByteArray_Size(obj);
+                        const ptr = py.PyByteArray_AsString(obj) orelse return error.ConversionError;
+                        return T{ .data = ptr[0..@intCast(size)] };
+                    } else if (py.PyMemoryView_Check(obj)) {
+                        var view: py.Py_buffer = undefined;
+                        if (py.PyObject_GetBuffer(obj, &view, py.PyBUF_SIMPLE) != 0) {
+                            return error.ConversionError;
+                        }
+                        const buf_ptr: [*]const u8 = @ptrCast(view.buf orelse {
+                            py.PyBuffer_Release(&view);
+                            return error.ConversionError;
+                        });
+                        return T{ .data = buf_ptr[0..@intCast(view.len)], ._view = view };
+                    }
+                    return error.TypeError;
+                }
+
                 // Check if T is Decimal type
                 if (@hasDecl(T, "_is_pyoz_decimal")) {
                     if (PyDecimal_Check(obj)) {
@@ -669,12 +709,24 @@ pub fn Converter(comptime class_infos: []const class_mod.ClassInfo) type {
                     if (int_info.signedness == .signed) {
                         const val = py.PyLong_AsLongLong(obj);
                         if (py.PyErr_Occurred() != null) return error.ConversionError;
-                        // Truncate to target type (wrap on overflow, like C)
+                        // Range check: raise OverflowError if value doesn't fit
+                        if (int_info.bits < 64) {
+                            if (val < std.math.minInt(T) or val > std.math.maxInt(T)) {
+                                py.PyErr_SetString(py.PyExc_OverflowError(), "int too large to convert to " ++ @typeName(T));
+                                return error.ConversionError;
+                            }
+                        }
                         return @truncate(val);
                     } else {
                         const val = py.PyLong_AsUnsignedLongLong(obj);
                         if (py.PyErr_Occurred() != null) return error.ConversionError;
-                        // Truncate to target type (wrap on overflow, like C)
+                        // Range check: raise OverflowError if value doesn't fit
+                        if (int_info.bits < 64) {
+                            if (val > std.math.maxInt(T)) {
+                                py.PyErr_SetString(py.PyExc_OverflowError(), "int too large to convert to " ++ @typeName(T));
+                                return error.ConversionError;
+                            }
+                        }
                         return @truncate(val);
                     }
                 },

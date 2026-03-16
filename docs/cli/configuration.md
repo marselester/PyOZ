@@ -78,6 +78,9 @@ module-path = "src/lib.zig"
 # Strip debug symbols in release builds
 # strip = true
 
+# Enable ABI3 (Stable ABI) for cross-version compatibility
+# abi3 = true
+
 # Linux platform tag for wheel builds
 # linux-platform-tag = "manylinux_2_17_x86_64"
 ```

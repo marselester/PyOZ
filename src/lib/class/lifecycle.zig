@@ -3,7 +3,9 @@
 //! Provides py_new, py_init, py_dealloc implementations.
 //!
 //! Private fields: Fields starting with underscore (_) are considered private
-//! and are NOT exposed to Python as __init__ arguments. They are zero-initialized.
+//! and are NOT exposed to Python as __init__ arguments. They are initialized
+//! using their default values if provided, zero-initialized if the type supports
+//! it, or left undefined (to be set by __new__).
 
 const std = @import("std");
 const py = @import("../python.zig");
@@ -77,6 +79,47 @@ fn flattenInitFields(comptime T: type, comptime is_pyoz_sub: bool, comptime Pare
     }
 }
 
+/// Build a default value for type T, using field defaults where available,
+/// and undefined for private fields that cannot be zero-initialized.
+/// This avoids the compile error from std.mem.zeroes on types with
+/// non-nullable pointers (e.g. std.heap.ArenaAllocator).
+fn initDefault(comptime T: type) T {
+    const fields = @typeInfo(T).@"struct".fields;
+    var result: T = undefined;
+    inline for (fields) |field| {
+        if (field.defaultValue()) |default_val| {
+            @field(result, field.name) = default_val;
+        } else if (comptime canZeroInit(field.type)) {
+            @field(result, field.name) = std.mem.zeroes(field.type);
+        }
+        // else: leave as undefined — __new__ must initialize it
+    }
+    return result;
+}
+
+/// Check at comptime whether a type can be safely zero-initialized via std.mem.zeroes.
+/// Returns false for types containing non-nullable, non-allowzero pointers.
+fn canZeroInit(comptime T: type) bool {
+    return switch (@typeInfo(T)) {
+        .pointer => |p| p.is_allowzero,
+        .optional => true,
+        .@"struct" => |s| {
+            for (s.fields) |field| {
+                if (!canZeroInit(field.type)) return false;
+            }
+            return true;
+        },
+        .@"union" => |u| {
+            for (u.fields) |field| {
+                if (!canZeroInit(field.type)) return false;
+            }
+            return true;
+        },
+        .@"fn" => false,
+        else => true,
+    };
+}
+
 /// Build lifecycle functions for a given type
 /// In ABI3 mode, type_object_ptr is not used (we get the type from heap_type at runtime)
 pub fn LifecycleBuilder(
@@ -139,7 +182,7 @@ pub fn LifecycleBuilder(
                 }
 
                 const self: *PyWrapper = @ptrCast(@alignCast(obj));
-                self.getData().* = std.mem.zeroes(T);
+                self.getData().* = comptime initDefault(T);
                 self.setInitialized(false);
                 self.initExtra();
                 return obj;
@@ -147,7 +190,7 @@ pub fn LifecycleBuilder(
 
             const obj = py.PyType_GenericAlloc(t, 0) orelse return null;
             const self: *PyWrapper = @ptrCast(@alignCast(obj));
-            self.getData().* = std.mem.zeroes(T);
+            self.getData().* = comptime initDefault(T);
             // _initialized is already 0 from GenericAlloc zero-fill
             self.initExtra();
             return obj;
@@ -155,7 +198,7 @@ pub fn LifecycleBuilder(
 
         /// __init__ - initialize object
         /// Only public fields (not starting with _) are accepted as arguments.
-        /// Private fields are zero-initialized in py_new.
+        /// Private fields are initialized in py_new using defaults or undefined.
         pub fn py_init(self_obj: ?*py.PyObject, args: ?*py.PyObject, kwds: ?*py.PyObject) callconv(.c) c_int {
             _ = kwds;
             const self: *PyWrapper = @ptrCast(@alignCast(self_obj orelse return -1));
@@ -232,7 +275,7 @@ pub fn LifecycleBuilder(
             } else {
                 comptime var i: usize = 0;
                 inline for (fields) |field| {
-                    // Skip private fields - they remain zero-initialized from py_new
+                    // Skip private fields - they are initialized in py_new
                     if (comptime isPrivateField(field.name)) continue;
                     // Skip Ref fields - they are managed internally, not via __init__
                     if (comptime ref_mod.isRefType(field.type)) continue;

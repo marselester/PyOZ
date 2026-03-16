@@ -13,6 +13,7 @@ const stubs_mod = @import("../stubs.zig");
 const class_mod = @import("mod.zig");
 const ClassInfo = class_mod.ClassInfo;
 const source_parser = @import("../source_parser.zig");
+const errors_mod = @import("../errors.zig");
 
 /// Build method wrappers for a given type
 pub fn MethodBuilder(comptime class_name: [*:0]const u8, comptime T: type, comptime PyWrapper: type, comptime class_infos: []const ClassInfo, comptime slot_dunders: []const []const u8) type {
@@ -472,7 +473,7 @@ pub fn MethodBuilder(comptime class_name: [*:0]const u8, comptime T: type, compt
                             // (e.g., KeyboardInterrupt from checkSignals)
                             if (py.PyErr_Occurred() == null) {
                                 const msg = @errorName(err);
-                                py.PyErr_SetString(py.PyExc_RuntimeError(), msg.ptr);
+                                py.PyErr_SetString(errors_mod.mapWellKnownError(msg), msg.ptr);
                             }
                             return null;
                         }
@@ -579,7 +580,7 @@ pub fn MethodBuilder(comptime class_name: [*:0]const u8, comptime T: type, compt
                             // (e.g., KeyboardInterrupt from checkSignals)
                             if (py.PyErr_Occurred() == null) {
                                 const msg = @errorName(err);
-                                py.PyErr_SetString(py.PyExc_RuntimeError(), msg.ptr);
+                                py.PyErr_SetString(errors_mod.mapWellKnownError(msg), msg.ptr);
                             }
                             return null;
                         }
@@ -689,7 +690,7 @@ pub fn MethodBuilder(comptime class_name: [*:0]const u8, comptime T: type, compt
                             // (e.g., KeyboardInterrupt from checkSignals)
                             if (py.PyErr_Occurred() == null) {
                                 const msg = @errorName(err);
-                                py.PyErr_SetString(py.PyExc_RuntimeError(), msg.ptr);
+                                py.PyErr_SetString(errors_mod.mapWellKnownError(msg), msg.ptr);
                             }
                             return null;
                         }

@@ -1694,6 +1694,50 @@ test "abi3 - FailingResource successful creation calls __del__ on delete" {
     try std.testing.expect(try python.eval(bool, "abi3_failing_resource_del_ok"));
 }
 
+// ============================================================================
+// Issue fixes: integer overflow, exception mapping
+// ============================================================================
+
+test "abi3 - exception mapping - class IndexError via __getitem__" {
+    const python = try initTestPython();
+
+    // ReversibleList.__getitem__ returns error.IndexOutOfBounds
+    // which should map to IndexError, not RuntimeError
+    try python.exec(
+        \\rl = example_abi3.ReversibleList(1, 2, 3)
+        \\index_error = False
+        \\try:
+        \\    rl[100]
+        \\except IndexError:
+        \\    index_error = True
+    );
+    try std.testing.expect(try python.eval(bool, "index_error"));
+}
+
+test "abi3 - exception mapping - FailingResource ValueError from __new__" {
+    const python = try initTestPython();
+
+    // FailingResource.__new__ returns error.ValueError for negative handles
+    try python.exec(
+        \\value_error = False
+        \\try:
+        \\    example_abi3.FailingResource(-1)
+        \\except ValueError:
+        \\    value_error = True
+    );
+    try std.testing.expect(try python.eval(bool, "value_error"));
+}
+
+test "abi3 - exception mapping - ComputeError custom exception" {
+    const python = try initTestPython();
+
+    // Verify custom exception ComputeError exists and is an Exception subclass
+    try python.exec(
+        \\is_exc = issubclass(example_abi3.ComputeError, Exception)
+    );
+    try std.testing.expect(try python.eval(bool, "is_exc"));
+}
+
 test "abi3 - FailingResource failed __new__ does not call __del__" {
     const python = try initTestPython();
 

@@ -9,6 +9,7 @@ const unwrapSignature = @import("../root.zig").unwrapSignature;
 
 const class_mod = @import("mod.zig");
 const ClassInfo = class_mod.ClassInfo;
+const errors_mod = @import("../errors.zig");
 
 /// Build iterator protocol for a given type
 pub fn IteratorProtocol(comptime _: [*:0]const u8, comptime T: type, comptime Parent: type, comptime class_infos: []const ClassInfo) type {
@@ -25,7 +26,7 @@ pub fn IteratorProtocol(comptime _: [*:0]const u8, comptime T: type, comptime Pa
                 const result = T.__iter__(self.getData()) catch |err| {
                     if (py.PyErr_Occurred() == null) {
                         const msg = @errorName(err);
-                        py.PyErr_SetString(py.PyExc_RuntimeError(), msg.ptr);
+                        py.PyErr_SetString(errors_mod.mapWellKnownError(msg), msg.ptr);
                     }
                     return null;
                 };
@@ -73,7 +74,7 @@ pub fn IteratorProtocol(comptime _: [*:0]const u8, comptime T: type, comptime Pa
                 const result = T.__next__(self.getData()) catch |err| {
                     if (py.PyErr_Occurred() == null) {
                         const msg = @errorName(err);
-                        py.PyErr_SetString(py.PyExc_RuntimeError(), msg.ptr);
+                        py.PyErr_SetString(errors_mod.mapWellKnownError(msg), msg.ptr);
                     }
                     return null;
                 };

@@ -34,7 +34,10 @@ PyOZ provides wrapper types for Python's specialized types:
 | `pyoz.Time` | `datetime.time` | Time values |
 | `pyoz.DateTime` | `datetime.datetime` | Combined date/time |
 | `pyoz.TimeDelta` | `datetime.timedelta` | Time differences |
-| `pyoz.Bytes` | `bytes` | Byte sequences |
+| `pyoz.Bytes` | `bytes` or `bytearray` | Byte sequences (read-only) |
+| `pyoz.ByteArray` | `bytearray` | Mutable byte sequences |
+| `pyoz.MemoryView` | `memoryview` | Read-only memoryview access (call `.release()` when done) |
+| `pyoz.BytesLike` | `bytes`, `bytearray`, or `memoryview` | Any byte-like object (call `.release()` when done) |
 | `pyoz.Path` | `str` or `pathlib.Path` | File paths (accepts both) |
 | `pyoz.Decimal` | `decimal.Decimal` | Arbitrary precision decimals |
 | `pyoz.Owned(T)` | (same as `T`) | Allocator-backed return values |

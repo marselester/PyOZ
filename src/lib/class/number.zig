@@ -10,6 +10,7 @@ const slots = py.slots;
 const unwrapSignature = @import("../root.zig").unwrapSignature;
 const class_mod = @import("mod.zig");
 const ClassInfo = class_mod.ClassInfo;
+const errors_mod = @import("../errors.zig");
 
 /// Build number protocol for a given type
 pub fn NumberProtocol(comptime _: [*:0]const u8, comptime T: type, comptime Parent: type, comptime class_infos: []const ClassInfo) type {
@@ -125,7 +126,7 @@ pub fn NumberProtocol(comptime _: [*:0]const u8, comptime T: type, comptime Pare
                 _ = result catch |err| {
                     if (py.PyErr_Occurred() == null) {
                         const msg = @errorName(err);
-                        py.PyErr_SetString(py.PyExc_RuntimeError(), msg.ptr);
+                        py.PyErr_SetString(errors_mod.mapWellKnownError(msg), msg.ptr);
                     }
                     return null;
                 };
@@ -243,7 +244,7 @@ pub fn NumberProtocol(comptime _: [*:0]const u8, comptime T: type, comptime Pare
                 const result = T.__bool__(self.getDataConst()) catch |err| {
                     if (py.PyErr_Occurred() == null) {
                         const msg = @errorName(err);
-                        py.PyErr_SetString(py.PyExc_RuntimeError(), msg.ptr);
+                        py.PyErr_SetString(errors_mod.mapWellKnownError(msg), msg.ptr);
                     }
                     return -1;
                 };

@@ -27,11 +27,22 @@ pub fn ListViewWithConverter(comptime T: type, comptime Conv: type) type {
         const Self = @This();
         pub const ElementType = T;
 
-        /// Get an element by index, returns null if conversion fails
+        /// Get an element by index, returns null and sets a Python exception on failure
         pub fn get(self: Self, index: usize) ?T {
             const idx: py.Py_ssize_t = @intCast(index);
-            const py_item = py.PyList_GetItem(self.py_list, idx) orelse return null;
-            return Conv.fromPy(T, py_item) catch null;
+            const py_item = py.PyList_GetItem(self.py_list, idx) orelse {
+                // PyList_GetItem already sets IndexError for out-of-bounds
+                if (py.PyErr_Occurred() == null) {
+                    py.PyErr_SetString(py.PyExc_IndexError(), "list index out of range");
+                }
+                return null;
+            };
+            return Conv.fromPy(T, py_item) catch {
+                if (py.PyErr_Occurred() == null) {
+                    py.PyErr_SetString(py.PyExc_TypeError(), "failed to convert list element");
+                }
+                return null;
+            };
         }
 
         /// Get the number of items

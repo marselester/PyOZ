@@ -7,6 +7,7 @@ const conversion = @import("../conversion.zig");
 const class_mod = @import("mod.zig");
 const ClassInfo = class_mod.ClassInfo;
 const unwrapSignature = @import("../root.zig").unwrapSignature;
+const errors_mod = @import("../errors.zig");
 
 // Rich comparison operation codes
 pub const Py_LT: c_int = 0;
@@ -70,7 +71,7 @@ pub fn ComparisonProtocol(comptime T: type, comptime Parent: type, comptime clas
                 const result = @field(T, method_name)(self_data, other) catch |err| {
                     if (py.PyErr_Occurred() == null) {
                         const msg = @errorName(err);
-                        py.PyErr_SetString(py.PyExc_RuntimeError(), msg.ptr);
+                        py.PyErr_SetString(errors_mod.mapWellKnownError(msg), msg.ptr);
                     }
                     return null;
                 };

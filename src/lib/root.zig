@@ -94,6 +94,8 @@ pub fn initDatetime() bool {
 const bytes_types = @import("types/bytes.zig");
 pub const Bytes = bytes_types.Bytes;
 pub const ByteArray = bytes_types.ByteArray;
+pub const MemoryView = bytes_types.MemoryView;
+pub const BytesLike = bytes_types.BytesLike;
 
 // =============================================================================
 // Type imports - Path

@@ -45,7 +45,7 @@ Private fields:
 - Are **NOT** exposed as Python properties (accessing `obj._internal_counter` raises `AttributeError`)
 - Are **NOT** included in `__init__` arguments (only `name` and `value` above)
 - Are **NOT** included in generated `.pyi` type stubs
-- Are zero-initialized when the object is created
+- Are initialized using their default values if provided, zero-initialized if the type supports it, or left undefined otherwise
 - Can still be accessed and modified by Zig methods
 
 This is useful for:

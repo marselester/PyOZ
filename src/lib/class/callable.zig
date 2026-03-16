@@ -11,6 +11,7 @@ const unwrapSignatureValue = @import("../root.zig").unwrapSignatureValue;
 
 const class_mod = @import("mod.zig");
 const ClassInfo = class_mod.ClassInfo;
+const errors_mod = @import("../errors.zig");
 
 /// Build callable protocol for a given type
 pub fn CallableProtocol(comptime _: [*:0]const u8, comptime T: type, comptime Parent: type, comptime class_infos: []const ClassInfo) type {
@@ -94,7 +95,7 @@ pub fn CallableProtocol(comptime _: [*:0]const u8, comptime T: type, comptime Pa
                 } else |err| {
                     if (py.PyErr_Occurred() == null) {
                         const msg = @errorName(err);
-                        py.PyErr_SetString(py.PyExc_RuntimeError(), msg.ptr);
+                        py.PyErr_SetString(errors_mod.mapWellKnownError(msg), msg.ptr);
                     }
                     return null;
                 }

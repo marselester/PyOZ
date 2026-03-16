@@ -498,6 +498,28 @@ help(example.add)               # add(a, b, /) — Add two integers.
 example.Point.__doc__           # "A 2D point in space."
 ```
 
+## Limitations
+
+### `anytype` Parameters
+
+Functions with `anytype` parameters are **skipped** by `.from` auto-scan. Zig's `anytype` is a comptime generic — the concrete type isn't known until the call site, so PyOZ cannot generate a Python binding for it.
+
+**Workaround:** Write a typed wrapper function that calls the generic one:
+
+```zig
+// This will NOT be auto-exported (has anytype):
+pub fn generic_set(sqe: *SQE, optval: anytype) void { ... }
+
+// This WILL be auto-exported (concrete types):
+pub fn set_int(sqe: *SQE, optval: i32) void {
+    generic_set(sqe, optval);
+}
+```
+
+### Comptime Parameters
+
+Similarly, functions with `comptime` parameters cannot be exported — they require compile-time-known values that Python cannot provide.
+
 ## Next Steps
 
 - [Functions](functions.md) — Explicit function registration with `pyoz.func()` and `pyoz.kwfunc()`

@@ -318,7 +318,10 @@ pyoz.mapErrorMsg("InvalidInput", .ValueError, "Input is invalid")
 | `pyoz.Time` | `datetime.time` |
 | `pyoz.DateTime` | `datetime.datetime` |
 | `pyoz.TimeDelta` | `datetime.timedelta` |
-| `pyoz.Bytes` | `bytes` |
+| `pyoz.Bytes` | `bytes` or `bytearray` |
+| `pyoz.ByteArray` | `bytearray` |
+| `pyoz.MemoryView` | `memoryview` |
+| `pyoz.BytesLike` | `bytes`, `bytearray`, or `memoryview` |
 | `pyoz.Path` | `str` or `pathlib.Path` |
 | `pyoz.Decimal` | `decimal.Decimal` |
 

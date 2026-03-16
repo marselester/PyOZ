@@ -5,6 +5,21 @@ All notable changes to PyOZ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.2] - 2026-03-16
+
+### Added
+- **`pyoz.MemoryView`** — New type for accepting Python `memoryview` objects. Provides read-only `data: []const u8` access to the underlying buffer. Call `.release()` when done.
+- **`pyoz.BytesLike`** — New unified type that accepts Python `bytes`, `bytearray`, or `memoryview`. Provides read-only `data: []const u8` regardless of source type. Call `.release()` when done (no-op for bytes/bytearray).
+- **`anytype` and `comptime` limitations documented** — The `.from` auto-scan guide now explains why functions with `anytype` or `comptime` parameters are skipped and shows the typed-wrapper workaround.
+- **`abi3 = true` configuration documented** — The `[tool.pyoz]` configuration reference now includes the `abi3` option.
+- **ByteArray, MemoryView, BytesLike in docs** — Added to both the types guide and API reference.
+
+### Fixed
+- **Private fields with non-zero-initializable types** — Private fields (underscore prefix) whose types contain non-nullable pointers (e.g. `std.heap.ArenaAllocator`, `std.mem.Allocator`) no longer cause a compile error. Previously, all private fields were zero-initialized via `std.mem.zeroes`, which fails for types that cannot be set to zero. Now uses a smarter `initDefault` that: (1) uses the field's default value if one is defined in the struct, (2) zero-initializes if the type supports it, or (3) leaves the field as `undefined` for types that cannot be zeroed — the user's `__new__` function must initialize these fields.
+- **Integer overflow now raises `OverflowError`** — Converting a Python `int` to a small Zig integer type (e.g. `u8`, `i16`, `u32`) now performs a range check and raises `OverflowError` if the value doesn't fit. Previously, values were silently truncated via `@truncate` (C-style wrapping), so `u8` receiving 256 would silently become 0.
+- **Class method errors now map to correct Python exceptions** — Zig errors returned from class methods (`__getitem__`, `__len__`, `__call__`, `__iter__`, `__next__`, `__repr__`, `__hash__`, comparisons, number protocol, mapping protocol, etc.) are now mapped to their corresponding Python exception types via `mapWellKnownError`. Previously, all class method errors were hardcoded to `RuntimeError`. For example, `error.IndexOutOfBounds` now raises `IndexError`, `error.ValueError` raises `ValueError`, `error.Overflow` raises `OverflowError`, etc. Affects 13 error sites across 8 class protocol files.
+- **`ListView.get()` sets IndexError/TypeError** — `ListView.get(index)` now sets `IndexError` for out-of-bounds access and `TypeError` for element conversion failures, instead of returning silent `null` with no Python exception set.
+
 ## [0.12.1] - 2026-03-04
 
 ### Added
