@@ -8,7 +8,7 @@
 
 Build blazing-fast Python extensions with zero boilerplate and zero Python C API headaches.
 
-[![GitHub Stars](https://img.shields.io/github/stars/dzonerzy/PyOZ?style=flat)](https://github.com/dzonerzy/PyOZ)
+[![GitHub Stars](https://img.shields.io/github/stars/pyozig/PyOZ?style=flat)](https://github.com/pyozig/PyOZ)
 [![Python](https://img.shields.io/badge/python-3.8--3.13-blue)](https://www.python.org/)
 [![Zig](https://img.shields.io/badge/zig-0.15+-orange)](https://ziglang.org/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
@@ -28,16 +28,12 @@ fn add(a: i64, b: i64) i64 {
     return a + b;
 }
 
-const MyModule = pyoz.module(.{
+pub const Module = pyoz.module(.{
     .name = "mymodule",
     .funcs = &.{
         pyoz.func("add", add, "Add two numbers"),
     },
 });
-
-pub export fn PyInit_mymodule() ?*pyoz.PyObject {
-    return MyModule.init();
-}
 ```
 
 ```python
@@ -61,10 +57,10 @@ print(mymodule.add(2, 3))  # 5
 pip install pyoz
 ```
 
-Or download a prebuilt binary from [GitHub Releases](https://github.com/dzonerzy/PyOZ/releases), or build from source:
+Or download a prebuilt binary from [GitHub Releases](https://github.com/pyozig/PyOZ/releases), or build from source:
 
 ```bash
-git clone https://github.com/dzonerzy/PyOZ.git
+git clone https://github.com/pyozig/PyOZ.git
 cd PyOZ
 zig build cli
 ```

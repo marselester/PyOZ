@@ -23,7 +23,7 @@ Zig package manifest defining project metadata and dependencies:
     .version = "0.1.0",
     .dependencies = .{
         .PyOZ = .{
-            .url = "https://github.com/pyozig/PyOZ/archive/refs/tags/v0.10.0.tar.gz",
+            .url = "https://github.com/pyozig/PyOZ/archive/refs/tags/v0.12.2.tar.gz",
             .hash = "1220abc123...",
         },
     },
@@ -49,8 +49,8 @@ description = "My PyOZ module"
 requires-python = ">=3.8"
 
 [build-system]
-requires = ["setuptools", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["pyoz"]
+build-backend = "pyoz.backend"
 ```
 
 ### PyOZ Settings
@@ -77,6 +77,9 @@ module-path = "src/lib.zig"
 
 # Strip debug symbols in release builds
 # strip = true
+
+# Enable ABI3 (Stable ABI) for cross-version compatibility
+# abi3 = true
 
 # Linux platform tag for wheel builds
 # linux-platform-tag = "manylinux_2_17_x86_64"

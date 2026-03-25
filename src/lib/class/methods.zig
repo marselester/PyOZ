@@ -13,6 +13,7 @@ const stubs_mod = @import("../stubs.zig");
 const class_mod = @import("mod.zig");
 const ClassInfo = class_mod.ClassInfo;
 const source_parser = @import("../source_parser.zig");
+const errors_mod = @import("../errors.zig");
 
 /// Build method wrappers for a given type
 pub fn MethodBuilder(comptime class_name: [*:0]const u8, comptime T: type, comptime PyWrapper: type, comptime class_infos: []const ClassInfo, comptime slot_dunders: []const []const u8) type {
@@ -365,8 +366,10 @@ pub fn MethodBuilder(comptime class_name: [*:0]const u8, comptime T: type, compt
 
                     // Build argument tuple for the method call
                     var extra_args = parseMethodArgs(args) catch |err| {
-                        const msg = @errorName(err);
-                        py.PyErr_SetString(py.PyExc_TypeError(), msg.ptr);
+                        if (py.PyErr_Occurred() == null) {
+                            const msg = @errorName(err);
+                            py.PyErr_SetString(py.PyExc_TypeError(), msg.ptr);
+                        }
                         return null;
                     };
                     // Ensure Path arguments are cleaned up after function call
@@ -472,7 +475,7 @@ pub fn MethodBuilder(comptime class_name: [*:0]const u8, comptime T: type, compt
                             // (e.g., KeyboardInterrupt from checkSignals)
                             if (py.PyErr_Occurred() == null) {
                                 const msg = @errorName(err);
-                                py.PyErr_SetString(py.PyExc_RuntimeError(), msg.ptr);
+                                py.PyErr_SetString(errors_mod.mapWellKnownError(msg), msg.ptr);
                             }
                             return null;
                         }
@@ -513,8 +516,10 @@ pub fn MethodBuilder(comptime class_name: [*:0]const u8, comptime T: type, compt
 
                     // Parse all arguments (no self to skip)
                     var zig_args = parseArgs(args) catch |err| {
-                        const msg = @errorName(err);
-                        py.PyErr_SetString(py.PyExc_TypeError(), msg.ptr);
+                        if (py.PyErr_Occurred() == null) {
+                            const msg = @errorName(err);
+                            py.PyErr_SetString(py.PyExc_TypeError(), msg.ptr);
+                        }
                         return null;
                     };
                     // Ensure Path arguments are cleaned up after function call
@@ -579,7 +584,7 @@ pub fn MethodBuilder(comptime class_name: [*:0]const u8, comptime T: type, compt
                             // (e.g., KeyboardInterrupt from checkSignals)
                             if (py.PyErr_Occurred() == null) {
                                 const msg = @errorName(err);
-                                py.PyErr_SetString(py.PyExc_RuntimeError(), msg.ptr);
+                                py.PyErr_SetString(errors_mod.mapWellKnownError(msg), msg.ptr);
                             }
                             return null;
                         }
@@ -621,8 +626,10 @@ pub fn MethodBuilder(comptime class_name: [*:0]const u8, comptime T: type, compt
 
                     // Parse arguments (skip the first `type` parameter)
                     var zig_args = parseArgs(args) catch |err| {
-                        const msg = @errorName(err);
-                        py.PyErr_SetString(py.PyExc_TypeError(), msg.ptr);
+                        if (py.PyErr_Occurred() == null) {
+                            const msg = @errorName(err);
+                            py.PyErr_SetString(py.PyExc_TypeError(), msg.ptr);
+                        }
                         return null;
                     };
                     // Ensure Path arguments are cleaned up after function call
@@ -689,7 +696,7 @@ pub fn MethodBuilder(comptime class_name: [*:0]const u8, comptime T: type, compt
                             // (e.g., KeyboardInterrupt from checkSignals)
                             if (py.PyErr_Occurred() == null) {
                                 const msg = @errorName(err);
-                                py.PyErr_SetString(py.PyExc_RuntimeError(), msg.ptr);
+                                py.PyErr_SetString(errors_mod.mapWellKnownError(msg), msg.ptr);
                             }
                             return null;
                         }

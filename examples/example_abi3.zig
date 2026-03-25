@@ -1906,3 +1906,10 @@ pub const Abi3Example = pyoz.module(.{
         @import("from_extras.zig"),
     },
 });
+
+// Required: forces analysis of all pub decls so PyInit_ is exported.
+comptime {
+    for (@typeInfo(@This()).@"struct".decls) |decl| {
+        _ = @field(@This(), decl.name);
+    }
+}

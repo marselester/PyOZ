@@ -12,6 +12,7 @@ const unwrapSignature = @import("../root.zig").unwrapSignature;
 
 const class_mod = @import("mod.zig");
 const ClassInfo = class_mod.ClassInfo;
+const errors_mod = @import("../errors.zig");
 
 /// Build mapping protocol for a given type
 pub fn MappingProtocol(comptime _: [*:0]const u8, comptime T: type, comptime Parent: type, comptime class_infos: []const ClassInfo) type {
@@ -42,7 +43,7 @@ pub fn MappingProtocol(comptime _: [*:0]const u8, comptime T: type, comptime Par
                 const result = T.__len__(self.getDataConst()) catch |err| {
                     if (py.PyErr_Occurred() == null) {
                         const msg = @errorName(err);
-                        py.PyErr_SetString(py.PyExc_RuntimeError(), msg.ptr);
+                        py.PyErr_SetString(errors_mod.mapWellKnownError(msg), msg.ptr);
                     }
                     return -1;
                 };
@@ -77,8 +78,12 @@ pub fn MappingProtocol(comptime _: [*:0]const u8, comptime T: type, comptime Par
 
             const zig_key = Conv.fromPy(KeyType, key) catch {
                 if (is_integer_key) {
-                    py.PyErr_SetString(py.PyExc_IndexError(), "Invalid index type");
-                } else {
+                    // For unsigned integer keys (e.g. usize), Python's C API raises
+                    // OverflowError for negative values. Replace with IndexError since
+                    // this is an indexing operation.
+                    py.PyErr_Clear();
+                    py.PyErr_SetString(py.PyExc_IndexError(), "negative index not supported for unsigned index type");
+                } else if (py.PyErr_Occurred() == null) {
                     py.PyErr_SetString(py.PyExc_KeyError(), "Invalid key type");
                 }
                 return null;
@@ -138,16 +143,20 @@ pub fn MappingProtocol(comptime _: [*:0]const u8, comptime T: type, comptime Par
                 };
 
                 const zig_key = Conv.fromPy(KeyType, key) catch {
-                    if (is_integer_key) {
-                        py.PyErr_SetString(py.PyExc_IndexError(), "Invalid index type");
-                    } else {
-                        py.PyErr_SetString(py.PyExc_KeyError(), "Invalid key type");
+                    if (py.PyErr_Occurred() == null) {
+                        if (is_integer_key) {
+                            py.PyErr_SetString(py.PyExc_IndexError(), "Invalid index type");
+                        } else {
+                            py.PyErr_SetString(py.PyExc_KeyError(), "Invalid key type");
+                        }
                     }
                     return -1;
                 };
 
                 const zig_value = Conv.fromPy(ValueType, value) catch {
-                    py.PyErr_SetString(py.PyExc_TypeError(), "invalid value type for __setitem__");
+                    if (py.PyErr_Occurred() == null) {
+                        py.PyErr_SetString(py.PyExc_TypeError(), "invalid value type for __setitem__");
+                    }
                     return -1;
                 };
 
@@ -191,10 +200,12 @@ pub fn MappingProtocol(comptime _: [*:0]const u8, comptime T: type, comptime Par
                 };
 
                 const zig_key = Conv.fromPy(KeyType, key) catch {
-                    if (is_integer_key) {
-                        py.PyErr_SetString(py.PyExc_IndexError(), "Invalid index type");
-                    } else {
-                        py.PyErr_SetString(py.PyExc_KeyError(), "Invalid key type");
+                    if (py.PyErr_Occurred() == null) {
+                        if (is_integer_key) {
+                            py.PyErr_SetString(py.PyExc_IndexError(), "Invalid index type");
+                        } else {
+                            py.PyErr_SetString(py.PyExc_KeyError(), "Invalid key type");
+                        }
                     }
                     return -1;
                 };

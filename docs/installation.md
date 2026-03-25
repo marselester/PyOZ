@@ -10,7 +10,7 @@ pip install pyoz
 
 This installs prebuilt binaries for Linux (x86_64/aarch64), macOS (x86_64/arm64), and Windows (x86_64/arm64). No compilation needed.
 
-Alternatively, download a binary from [GitHub Releases](https://github.com/dzonerzy/PyOZ/releases) or build from source with `zig build cli`.
+Alternatively, download a binary from [GitHub Releases](https://github.com/pyozig/PyOZ/releases) or build from source with `zig build cli`.
 
 ## Requirements
 
@@ -26,9 +26,9 @@ Alternatively, download a binary from [GitHub Releases](https://github.com/dzone
 
 ```bash
 # Download from ziglang.org
-wget https://ziglang.org/download/0.13.0/zig-linux-x86_64-0.13.0.tar.xz
-tar xf zig-linux-x86_64-0.13.0.tar.xz
-export PATH=$PATH:$(pwd)/zig-linux-x86_64-0.13.0
+wget https://ziglang.org/download/0.15.0/zig-linux-x86_64-0.15.0.tar.xz
+tar xf zig-linux-x86_64-0.15.0.tar.xz
+export PATH=$PATH:$(pwd)/zig-linux-x86_64-0.15.0
 ```
 
 Or use your package manager:
@@ -79,68 +79,32 @@ Install Python from [python.org](https://python.org) with the "Install developme
 
 ## Setting Up a PyOZ Project
 
-### Option 1: Add as Zig Dependency
+### Option 1: Use the CLI (Recommended)
 
-Add PyOZ to your `build.zig.zon`:
+The `pyoz` CLI handles all project setup, build configuration, and Python embedding automatically:
 
-```zig
-.{
-    .name = "my-python-extension",
-    .version = "0.1.0",
-    .dependencies = .{
-        .PyOZ = .{
-            .url = "https://github.com/pyozig/PyOZ/archive/refs/tags/v0.10.0.tar.gz",
-            .hash = "...", // Get hash from release
-        },
-    },
-}
+```bash
+pyoz init mymodule
+cd mymodule
+pyoz build
 ```
 
-Then in your `build.zig`:
-
-```zig
-const std = @import("std");
-
-pub fn build(b: *std.Build) void {
-    const target = b.standardTargetOptions(.{});
-    const optimize = b.standardOptimizeOption(.{});
-
-    const pyoz_dep = b.dependency("PyOZ", .{
-        .target = target,
-        .optimize = optimize,
-    });
-
-    const lib = b.addSharedLibrary(.{
-        .name = "mymodule",
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-
-    lib.root_module.addImport("PyOZ", pyoz_dep.module("PyOZ"));
-
-    // Link Python
-    lib.linkSystemLibrary("python3");
-    lib.addIncludePath(.{ .cwd_relative = "/usr/include/python3.10" });
-
-    b.installArtifact(lib);
-}
-```
+This generates the correct `build.zig`, `build.zig.zon`, and `pyproject.toml` — no manual configuration needed. See the [Quick Start](quickstart.md) for a full walkthrough.
 
 ### Option 2: Clone the Repository
 
 ```bash
-git clone https://github.com/dzonerzy/PyOZ.git
+git clone https://github.com/pyozig/PyOZ.git
 cd PyOZ
 zig build example  # Build the example module
 ```
 
 ## Verifying Installation
 
-After building, test your module:
+After building with `pyoz build`, install and test:
 
 ```bash
-cd zig-out/lib
+pip install dist/mymodule-*.whl
 python3 -c "import mymodule; print(mymodule.add(2, 3))"
 ```
 

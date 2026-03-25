@@ -9,6 +9,7 @@ const conversion = @import("../conversion.zig");
 const class_mod = @import("mod.zig");
 const ClassInfo = class_mod.ClassInfo;
 const unwrapSignature = @import("../root.zig").unwrapSignature;
+const errors_mod = @import("../errors.zig");
 
 /// Check if a field name indicates a private field (starts with underscore)
 fn isPrivateField(comptime field_name: []const u8) bool {
@@ -143,7 +144,7 @@ pub fn ReprProtocol(comptime name: [*:0]const u8, comptime T: type, comptime Par
                 const result = T.__hash__(self.getDataConst()) catch |err| {
                     if (py.PyErr_Occurred() == null) {
                         const msg = @errorName(err);
-                        py.PyErr_SetString(py.PyExc_RuntimeError(), msg.ptr);
+                        py.PyErr_SetString(errors_mod.mapWellKnownError(msg), msg.ptr);
                     }
                     return -1;
                 };
@@ -171,7 +172,7 @@ pub fn ReprProtocol(comptime name: [*:0]const u8, comptime T: type, comptime Par
                 } else |err| {
                     if (py.PyErr_Occurred() == null) {
                         const msg = @errorName(err);
-                        py.PyErr_SetString(py.PyExc_RuntimeError(), msg.ptr);
+                        py.PyErr_SetString(errors_mod.mapWellKnownError(msg), msg.ptr);
                     }
                     return null;
                 }

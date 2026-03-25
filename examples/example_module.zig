@@ -2725,6 +2725,39 @@ const PrivateFieldsExample = struct {
 };
 
 // ============================================================================
+// ArenaClass - demonstrates private fields with non-zero-initializable types
+// (e.g. std.heap.ArenaAllocator which contains non-nullable pointers)
+const ArenaClass = struct {
+    value: i64,
+    _arena: std.heap.ArenaAllocator,
+
+    pub fn __new__(value: i64) ArenaClass {
+        return .{
+            .value = value,
+            ._arena = std.heap.ArenaAllocator.init(std.heap.page_allocator),
+        };
+    }
+
+    pub fn __del__(self: *ArenaClass) void {
+        self._arena.deinit();
+    }
+
+    pub fn __repr__(self: *const ArenaClass) [*:0]const u8 {
+        return pyoz.fmt("ArenaClass(value={d})", .{self.value});
+    }
+
+    pub fn get_value(self: *const ArenaClass) i64 {
+        return self.value;
+    }
+
+    /// Allocate a buffer using the arena and return its length
+    pub fn alloc_buffer(self: *ArenaClass, size: i64) !i64 {
+        const buf = try self._arena.allocator().alloc(u8, @intCast(size));
+        return @intCast(buf.len);
+    }
+};
+
+// ============================================================================
 // Simple class with no custom __repr__ - tests default repr generation
 const SimplePoint = struct {
     x: f64,
@@ -3146,6 +3179,7 @@ pub const Example = pyoz.module(.{
         pyoz.class("Flexible", Flexible),
         pyoz.class("Temperature", Temperature),
         pyoz.class("PrivateFieldsExample", PrivateFieldsExample),
+        pyoz.class("ArenaClass", ArenaClass),
         pyoz.class("SimplePoint", SimplePoint),
         pyoz.class("Resource", Resource),
         pyoz.class("FailingResource", FailingResource),
@@ -3245,3 +3279,10 @@ var math_methods = [_]pyoz.PyMethodDef{
     pyoz.methodDef("is_prime", &pyoz.wrapFunc(math_is_prime), "Check if a number is prime"),
     pyoz.methodDefSentinel(),
 };
+
+// Required: forces analysis of all pub decls so PyInit_ is exported.
+comptime {
+    for (@typeInfo(@This()).@"struct".decls) |decl| {
+        _ = @field(@This(), decl.name);
+    }
+}

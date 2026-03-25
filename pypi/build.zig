@@ -147,32 +147,11 @@ pub fn build(b: *std.Build) void {
         },
     });
 
-    // Generate a bridge module that forces analysis of all pub decls in the
-    // user's code. This triggers @export inside pyoz.module() so the PyInit_
-    // function is automatically created — no manual boilerplate needed.
-    const bridge_wf = b.addWriteFiles();
-    const bridge_source = bridge_wf.add("_pyoz_bridge.zig",
-        \\const _mod = @import("_pyoz_mod");
-        \\comptime {
-        \\    for (@typeInfo(_mod).@"struct".decls) |decl| {
-        \\        _ = @field(_mod, decl.name);
-        \\    }
-        \\}
-    );
-    const bridge_mod = b.createModule(.{
-        .root_source_file = bridge_source,
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "_pyoz_mod", .module = user_lib_mod },
-        },
-    });
-
     // Build the shared library
     const lib = b.addLibrary(.{
         .name = "_pyoz",
         .linkage = .dynamic,
-        .root_module = bridge_mod,
+        .root_module = user_lib_mod,
     });
 
     // Add miniz C source (needed by zip.zig which is imported by wheel.zig)
