@@ -152,26 +152,10 @@ pub fn build(b: *std.Build) void {
             .{ .name = "PyOZ", .module = pyoz_mod },
         },
     });
-    const example_bridge_wf = b.addWriteFiles();
-    const example_bridge_source = example_bridge_wf.add("_pyoz_bridge.zig",
-        \\const _mod = @import("_pyoz_mod");
-        \\comptime {
-        \\    for (@typeInfo(_mod).@"struct".decls) |decl| {
-        \\        _ = @field(_mod, decl.name);
-        \\    }
-        \\}
-    );
     const example_lib = b.addLibrary(.{
         .name = "example",
         .linkage = .dynamic,
-        .root_module = b.createModule(.{
-            .root_source_file = example_bridge_source,
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "_pyoz_mod", .module = example_user_mod },
-            },
-        }),
+        .root_module = example_user_mod,
     });
 
     // Enable sanitizers if requested
@@ -210,26 +194,10 @@ pub fn build(b: *std.Build) void {
             .{ .name = "PyOZ", .module = pyoz_mod },
         },
     });
-    const example_abi3_bridge_wf = b.addWriteFiles();
-    const example_abi3_bridge_source = example_abi3_bridge_wf.add("_pyoz_bridge.zig",
-        \\const _mod = @import("_pyoz_mod");
-        \\comptime {
-        \\    for (@typeInfo(_mod).@"struct".decls) |decl| {
-        \\        _ = @field(_mod, decl.name);
-        \\    }
-        \\}
-    );
     const example_abi3_lib = b.addLibrary(.{
         .name = "example_abi3",
         .linkage = .dynamic,
-        .root_module = b.createModule(.{
-            .root_source_file = example_abi3_bridge_source,
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "_pyoz_mod", .module = example_abi3_user_mod },
-            },
-        }),
+        .root_module = example_abi3_user_mod,
     });
 
     // Enable sanitizers if requested

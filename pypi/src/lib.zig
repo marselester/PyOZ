@@ -85,3 +85,10 @@ pub const PyOZCli = pyoz.module(.{
         pyoz.constant("__version__", version.string),
     },
 });
+
+// Required: forces analysis of all pub decls so PyInit_ is exported.
+comptime {
+    for (@typeInfo(@This()).@"struct".decls) |decl| {
+        _ = @field(@This(), decl.name);
+    }
+}

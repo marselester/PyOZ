@@ -14,11 +14,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`abi3 = true` configuration documented** — The `[tool.pyoz]` configuration reference now includes the `abi3` option.
 - **ByteArray, MemoryView, BytesLike in docs** — Added to both the types guide and API reference.
 
+### Changed
+- **Removed bridge module — user module is now the root module** — `pyoz init` no longer generates a separate `_pyoz_bridge.zig` module. Instead, the comptime decl-analysis block is inlined directly in the user's `lib.zig`, making it the library's root module. This enables Zig root-module features like `std_options` (custom logging, panic handlers, etc.) that were previously inaccessible because the bridge was the root. The `build.zig` template is also simplified (no `WriteFiles`, no extra `createModule`).
+
 ### Fixed
 - **Private fields with non-zero-initializable types** — Private fields (underscore prefix) whose types contain non-nullable pointers (e.g. `std.heap.ArenaAllocator`, `std.mem.Allocator`) no longer cause a compile error. Previously, all private fields were zero-initialized via `std.mem.zeroes`, which fails for types that cannot be set to zero. Now uses a smarter `initDefault` that: (1) uses the field's default value if one is defined in the struct, (2) zero-initializes if the type supports it, or (3) leaves the field as `undefined` for types that cannot be zeroed — the user's `__new__` function must initialize these fields.
 - **Integer overflow now raises `OverflowError`** — Converting a Python `int` to a small Zig integer type (e.g. `u8`, `i16`, `u32`) now performs a range check and raises `OverflowError` if the value doesn't fit. Previously, values were silently truncated via `@truncate` (C-style wrapping), so `u8` receiving 256 would silently become 0.
 - **Class method errors now map to correct Python exceptions** — Zig errors returned from class methods (`__getitem__`, `__len__`, `__call__`, `__iter__`, `__next__`, `__repr__`, `__hash__`, comparisons, number protocol, mapping protocol, etc.) are now mapped to their corresponding Python exception types via `mapWellKnownError`. Previously, all class method errors were hardcoded to `RuntimeError`. For example, `error.IndexOutOfBounds` now raises `IndexError`, `error.ValueError` raises `ValueError`, `error.Overflow` raises `OverflowError`, etc. Affects 13 error sites across 8 class protocol files.
 - **`ListView.get()` sets IndexError/TypeError** — `ListView.get(index)` now sets `IndexError` for out-of-bounds access and `TypeError` for element conversion failures, instead of returning silent `null` with no Python exception set.
+- **Negative index on unsigned `__getitem__` now raises `IndexError`** — Classes with `usize` index in `__getitem__` (mapping protocol) now raise `IndexError` instead of `OverflowError` when accessed with a negative index. Previously, Python's C API `OverflowError` from converting a negative int to unsigned was propagated directly.
 
 ## [0.12.1] - 2026-03-04
 

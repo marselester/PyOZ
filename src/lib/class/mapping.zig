@@ -77,12 +77,14 @@ pub fn MappingProtocol(comptime _: [*:0]const u8, comptime T: type, comptime Par
             };
 
             const zig_key = Conv.fromPy(KeyType, key) catch {
-                if (py.PyErr_Occurred() == null) {
-                    if (is_integer_key) {
-                        py.PyErr_SetString(py.PyExc_IndexError(), "Invalid index type");
-                    } else {
-                        py.PyErr_SetString(py.PyExc_KeyError(), "Invalid key type");
-                    }
+                if (is_integer_key) {
+                    // For unsigned integer keys (e.g. usize), Python's C API raises
+                    // OverflowError for negative values. Replace with IndexError since
+                    // this is an indexing operation.
+                    py.PyErr_Clear();
+                    py.PyErr_SetString(py.PyExc_IndexError(), "negative index not supported for unsigned index type");
+                } else if (py.PyErr_Occurred() == null) {
+                    py.PyErr_SetString(py.PyExc_KeyError(), "Invalid key type");
                 }
                 return null;
             };

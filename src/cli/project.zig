@@ -521,6 +521,13 @@ const lib_zig_template =
     \\    .classes = &.{},
     \\});
     \\
+    \\// Required: forces analysis of all pub decls so PyInit_ is exported.
+    \\comptime {
+    \\    for (@typeInfo(@This()).@"struct".decls) |decl| {
+    \\        _ = @field(@This(), decl.name);
+    \\    }
+    \\}
+    \\
 ;
 
 const build_zig_template =
@@ -560,33 +567,11 @@ const build_zig_template =
     \\    //   user_lib_mod.addIncludePath(b.path("vendor/include"));
     \\    //   user_lib_mod.addObjectFile(b.path("vendor/libfoo.a"));
     \\
-    \\    // Generate a bridge module that forces analysis of all pub decls in the
-    \\    // user's code. This triggers @export inside pyoz.module() so the PyInit_
-    \\    // function is automatically created — no manual boilerplate needed.
-    \\    const bridge_wf = b.addWriteFiles();
-    \\    const bridge_source = bridge_wf.add("_pyoz_bridge.zig",
-    \\        \\const _mod = @import("_pyoz_mod");
-    \\        \\comptime {
-    \\        \\    for (@typeInfo(_mod).@"struct".decls) |decl| {
-    \\        \\        _ = @field(_mod, decl.name);
-    \\        \\    }
-    \\        \\}
-    \\    );
-    \\    const bridge_mod = b.createModule(.{
-    \\        .root_source_file = bridge_source,
-    \\        .target = target,
-    \\        .optimize = optimize,
-    \\        .strip = strip,
-    \\        .imports = &.{
-    \\            .{ .name = "_pyoz_mod", .module = user_lib_mod },
-    \\        },
-    \\    });
-    \\
     \\    // Build the Python extension as a dynamic library
     \\    const lib = b.addLibrary(.{
     \\        .name = "{[name]s}",
     \\        .linkage = .dynamic,
-    \\        .root_module = bridge_mod,
+    \\        .root_module = user_lib_mod,
     \\    });
     \\
     \\    // Link libc (required for Python C API)
@@ -652,34 +637,12 @@ const build_zig_package_template =
     \\    //   user_lib_mod.addIncludePath(b.path("vendor/include"));
     \\    //   user_lib_mod.addObjectFile(b.path("vendor/libfoo.a"));
     \\
-    \\    // Generate a bridge module that forces analysis of all pub decls in the
-    \\    // user's code. This triggers @export inside pyoz.module() so the PyInit_
-    \\    // function is automatically created — no manual boilerplate needed.
-    \\    const bridge_wf = b.addWriteFiles();
-    \\    const bridge_source = bridge_wf.add("_pyoz_bridge.zig",
-    \\        \\const _mod = @import("_pyoz_mod");
-    \\        \\comptime {
-    \\        \\    for (@typeInfo(_mod).@"struct".decls) |decl| {
-    \\        \\        _ = @field(_mod, decl.name);
-    \\        \\    }
-    \\        \\}
-    \\    );
-    \\    const bridge_mod = b.createModule(.{
-    \\        .root_source_file = bridge_source,
-    \\        .target = target,
-    \\        .optimize = optimize,
-    \\        .strip = strip,
-    \\        .imports = &.{
-    \\            .{ .name = "_pyoz_mod", .module = user_lib_mod },
-    \\        },
-    \\    });
-    \\
     \\    // Build the Python extension as a dynamic library
     \\    // The underscore prefix is optional; it separates the .so from the Python package directory
     \\    const lib = b.addLibrary(.{
     \\        .name = "_{[name]s}",
     \\        .linkage = .dynamic,
-    \\        .root_module = bridge_mod,
+    \\        .root_module = user_lib_mod,
     \\    });
     \\
     \\    // Link libc (required for Python C API)
@@ -751,6 +714,13 @@ const lib_zig_package_template =
     \\    },
     \\    .classes = &.{},
     \\});
+    \\
+    \\// Required: forces analysis of all pub decls so PyInit_ is exported.
+    \\comptime {
+    \\    for (@typeInfo(@This()).@"struct".decls) |decl| {
+    \\        _ = @field(@This(), decl.name);
+    \\    }
+    \\}
     \\
 ;
 

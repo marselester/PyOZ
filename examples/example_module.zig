@@ -3279,3 +3279,10 @@ var math_methods = [_]pyoz.PyMethodDef{
     pyoz.methodDef("is_prime", &pyoz.wrapFunc(math_is_prime), "Check if a number is prime"),
     pyoz.methodDefSentinel(),
 };
+
+// Required: forces analysis of all pub decls so PyInit_ is exported.
+comptime {
+    for (@typeInfo(@This()).@"struct".decls) |decl| {
+        _ = @field(@This(), decl.name);
+    }
+}
