@@ -1959,6 +1959,60 @@ test "fn calculate_named - keyword arguments with operations" {
     try std.testing.expectApproxEqAbs(@as(f64, 2.5), try python.eval(f64, "example.calculate_named(x=10, y=4, operation='div')"), 0.0001);
 }
 
+test "fn greet_named - fromPy exception not overwritten" {
+    const python = try initTestPython();
+
+    try python.exec(
+        \\try:
+        \\    example.greet_named(name='hi', times=2**63)
+        \\    exc_type = None
+        \\except OverflowError:
+        \\    exc_type = 'OverflowError'
+        \\except TypeError:
+        \\    exc_type = 'TypeError'
+    );
+    try std.testing.expect(try python.eval(bool, "exc_type == 'OverflowError'"));
+}
+
+test "fn greet_named - unexpected kwargs rejected" {
+    const python = try initTestPython();
+
+    try python.exec(
+        \\try:
+        \\    example.greet_named(name='hi', foo=1)
+        \\    raised = False
+        \\except TypeError:
+        \\    raised = True
+    );
+    try std.testing.expect(try python.eval(bool, "raised"));
+}
+
+test "fn greet_named - too many positional args rejected" {
+    const python = try initTestPython();
+
+    try python.exec(
+        \\try:
+        \\    example.greet_named('hi', 'Hey', 1, True, 'extra')
+        \\    raised = False
+        \\except TypeError:
+        \\    raised = True
+    );
+    try std.testing.expect(try python.eval(bool, "raised"));
+}
+
+test "fn greet_named - duplicate positional and keyword rejected" {
+    const python = try initTestPython();
+
+    try python.exec(
+        \\try:
+        \\    example.greet_named('hi', name='hello')
+        \\    raised = False
+        \\except TypeError:
+        \\    raised = True
+    );
+    try std.testing.expect(try python.eval(bool, "raised"));
+}
+
 // ============================================================================
 // SUBMODULES (math submodule)
 // ============================================================================

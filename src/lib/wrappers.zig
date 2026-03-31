@@ -140,6 +140,18 @@ pub fn parseNamedArgs(
     // Get positional args count
     const pos_count: usize = if (args) |a| @intCast(py.PyTuple_Size(a)) else 0;
 
+    if (pos_count > args_fields.len) {
+        py.PyErr_SetString(
+            py.PyExc_TypeError(),
+            "Too many positional arguments (expected at most " ++
+                std.fmt.comptimePrint("{}", .{args_fields.len}) ++ ")",
+        );
+        return null;
+    }
+
+    // Track how many kwargs were consumed to detect unexpected kwargs.
+    var kwargs_consumed: usize = 0;
+
     // Parse each field
     inline for (args_fields, 0..) |field, i| {
         const has_default = field.default_value_ptr != null;
@@ -155,28 +167,33 @@ pub fn parseNamedArgs(
                 @field(result, field.name) = null;
             } else if (is_optional) {
                 @field(result, field.name) = Conv.fromPy(@typeInfo(field.type).optional.child, item) catch {
-                    py.PyErr_SetString(py.PyExc_TypeError(), "Invalid type for argument: " ++ field.name);
+                    if (py.PyErr_Occurred() == null)
+                        py.PyErr_SetString(py.PyExc_TypeError(), "Invalid type for argument: " ++ field.name);
                     return null;
                 };
             } else {
                 @field(result, field.name) = Conv.fromPy(field.type, item) catch {
-                    py.PyErr_SetString(py.PyExc_TypeError(), "Invalid type for argument: " ++ field.name);
+                    if (py.PyErr_Occurred() == null)
+                        py.PyErr_SetString(py.PyExc_TypeError(), "Invalid type for argument: " ++ field.name);
                     return null;
                 };
             }
         } else if (kwargs) |kw| {
             // Try keyword argument by name
             if (py.PyDict_GetItemString(kw, field.name.ptr)) |item| {
+                kwargs_consumed += 1;
                 if (is_optional and py.PyNone_Check(item)) {
                     @field(result, field.name) = null;
                 } else if (is_optional) {
                     @field(result, field.name) = Conv.fromPy(@typeInfo(field.type).optional.child, item) catch {
-                        py.PyErr_SetString(py.PyExc_TypeError(), "Invalid type for argument: " ++ field.name);
+                        if (py.PyErr_Occurred() == null)
+                            py.PyErr_SetString(py.PyExc_TypeError(), "Invalid type for argument: " ++ field.name);
                         return null;
                     };
                 } else {
                     @field(result, field.name) = Conv.fromPy(field.type, item) catch {
-                        py.PyErr_SetString(py.PyExc_TypeError(), "Invalid type for argument: " ++ field.name);
+                        if (py.PyErr_Occurred() == null)
+                            py.PyErr_SetString(py.PyExc_TypeError(), "Invalid type for argument: " ++ field.name);
                         return null;
                     };
                 }
@@ -196,6 +213,25 @@ pub fn parseNamedArgs(
             @field(result, field.name) = null;
         } else {
             py.PyErr_SetString(py.PyExc_TypeError(), "Missing required argument: " ++ field.name);
+            return null;
+        }
+    }
+
+    if (kwargs) |kw| {
+        // Check for unexpected keyword arguments.
+        const kwargs_total: usize = @intCast(py.PyDict_Size(kw));
+        if (kwargs_consumed < kwargs_total) {
+            // Distinguish between duplicate positional+keyword and truly unexpected kwargs.
+            inline for (args_fields, 0..) |field, i| {
+                if (i < pos_count and py.PyDict_GetItemString(kw, field.name.ptr) != null) {
+                    py.PyErr_SetString(
+                        py.PyExc_TypeError(),
+                        "Got multiple values for argument '" ++ field.name ++ "'",
+                    );
+                    return null;
+                }
+            }
+            py.PyErr_SetString(py.PyExc_TypeError(), "Unexpected keyword argument");
             return null;
         }
     }
