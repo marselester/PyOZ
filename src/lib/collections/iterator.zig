@@ -216,7 +216,10 @@ pub fn LazyIteratorWrapper(comptime T: type, comptime State: type) type {
         /// tp_iternext: get next item or return null for StopIteration
         fn py_iternext(self_obj: ?*py.PyObject) callconv(.c) ?*py.PyObject {
             const wrapper: *PyIterWrapper = @ptrCast(@alignCast(self_obj orelse return null));
-            const state = wrapper.getState();
+            const state = if (@typeInfo(State) == .pointer)
+                wrapper.getState().*
+            else
+                wrapper.getState();
 
             if (state.next()) |value| {
                 return Conv.toPy(T, value);
@@ -229,6 +232,15 @@ pub fn LazyIteratorWrapper(comptime T: type, comptime State: type) type {
         /// tp_dealloc: free the object
         fn py_dealloc(self_obj: ?*py.PyObject) callconv(.c) void {
             const obj = self_obj orelse return;
+            const wrapper: *PyIterWrapper = @ptrCast(@alignCast(obj));
+            const state = wrapper.getState();
+
+            if (@typeInfo(State) == .pointer and @hasDecl(std.meta.Child(State), "deinit")) {
+                state.*.deinit();
+            } else if (@hasDecl(State, "deinit")) {
+                state.deinit();
+            }
+
             py.PyObject_Del(obj);
         }
 
