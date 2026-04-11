@@ -1695,11 +1695,19 @@ pub fn module(comptime config: anytype) type {
             return 0;
         }
 
-        // Module slots for multi-phase initialization (PEP 489)
-        var module_slots = [_]py.c.PyModuleDef_Slot{
-            .{ .slot = py.c.Py_mod_exec, .value = @ptrCast(@constCast(&moduleExec)) },
-            .{ .slot = 0, .value = null },
-        };
+        // Module slots for multi-phase initialization (PEP 489).
+        // Py_mod_gil declares the module safe to run without the GIL (PEP 703).
+        var module_slots = if (@hasDecl(py.c, "Py_mod_gil"))
+            [_]py.c.PyModuleDef_Slot{
+                .{ .slot = py.c.Py_mod_exec, .value = @ptrCast(@constCast(&moduleExec)) },
+                .{ .slot = py.c.Py_mod_gil, .value = py.c.Py_MOD_GIL_NOT_USED },
+                .{ .slot = 0, .value = null },
+            }
+        else
+            [_]py.c.PyModuleDef_Slot{
+                .{ .slot = py.c.Py_mod_exec, .value = @ptrCast(@constCast(&moduleExec)) },
+                .{ .slot = 0, .value = null },
+            };
 
         // Module docstring: use explicit .doc if set, otherwise try __doc__ from .from namespaces
         const m_doc: ?[*:0]const u8 = if (@hasField(@TypeOf(config), "doc"))
