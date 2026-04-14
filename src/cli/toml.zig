@@ -44,6 +44,19 @@ pub const PyProjectConfig = struct {
         self.include_ext.deinit(allocator);
     }
 
+    /// Get normalized name for wheel filenames.
+    /// PEP 427: hyphens become underscores.
+    pub fn getWheelName(self: PyProjectConfig, allocator: std.mem.Allocator) ![]const u8 {
+        const result = try allocator.dupe(u8, self.name);
+        for (result) |*ch| {
+            if (ch.* == '-') {
+                ch.* = '_';
+            }
+        }
+
+        return result;
+    }
+
     /// Get version with fallback to default
     pub fn getVersion(self: PyProjectConfig) []const u8 {
         return if (self.version.len > 0) self.version else "0.1.0";

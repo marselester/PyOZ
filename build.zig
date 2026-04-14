@@ -9,6 +9,7 @@ const PythonConfig = struct {
     include_dir: []const u8,
     lib_dir: ?[]const u8,
     lib_name: []const u8,
+    free_threaded: bool,
 };
 
 /// Get the Python executable name for the current platform
@@ -64,13 +65,31 @@ fn detectPython(b: *std.Build) ?PythonConfig {
         }
     } else |_| {}
 
+    // Detect free-threaded Python via Py_GIL_DISABLED (cross-platform).
+    const gil_output = b.runAllowFail(
+        &.{
+            python_cmd,
+            "-c",
+            "import sysconfig; print(sysconfig.get_config_var('Py_GIL_DISABLED') or 0)",
+        },
+        &out_code,
+        .Inherit,
+    ) catch null;
+    const free_threaded = if (gil_output) |r| r.len > 0 and r[0] == '1' else false;
+    const abiflags: []const u8 = if (free_threaded) "t" else "";
+
     // Construct library name based on platform
     const lib_name = if (builtin.os.tag == .windows)
-        // Windows uses python<major><minor> (no dot), e.g., python313
-        std.fmt.allocPrint(b.allocator, "python{d}{d}", .{ version_major, version_minor }) catch return null
+        std.fmt.allocPrint(b.allocator, "python{d}{d}{s}", .{
+            version_major,
+            version_minor,
+            abiflags,
+        }) catch return null
     else
-        // Unix uses python<major>.<minor>, e.g., python3.13
-        std.fmt.allocPrint(b.allocator, "python{s}", .{version}) catch return null;
+        std.fmt.allocPrint(b.allocator, "python{s}{s}", .{
+            version,
+            abiflags,
+        }) catch return null;
 
     return PythonConfig{
         .version = version,
@@ -79,6 +98,7 @@ fn detectPython(b: *std.Build) ?PythonConfig {
         .include_dir = include_dir,
         .lib_dir = lib_dir,
         .lib_name = lib_name,
+        .free_threaded = free_threaded,
     };
 }
 
@@ -138,6 +158,11 @@ pub fn build(b: *std.Build) void {
         }
     } else if (python_config) |python| {
         pyoz_mod.addIncludePath(.{ .cwd_relative = python.include_dir });
+        // Windows pyconfig.h doesn't define Py_GIL_DISABLED
+        // for free-threaded builds, see cpython#111650.
+        if (python.free_threaded) {
+            pyoz_mod.addCMacro("Py_GIL_DISABLED", "1");
+        }
     }
 
     // ========================================================================

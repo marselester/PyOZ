@@ -11,18 +11,24 @@ pub const PythonConfig = struct {
     include_dir: []const u8,
     lib_dir: ?[]const u8,
     lib_name: []const u8,
+    abiflags: []const u8,
 
     pub fn deinit(self: *PythonConfig, allocator: std.mem.Allocator) void {
         allocator.free(self.version_str);
         allocator.free(self.include_dir);
         if (self.lib_dir) |ld| allocator.free(ld);
         allocator.free(self.lib_name);
+        allocator.free(self.abiflags);
     }
 
-    /// Get Python tag for wheel (e.g., "cp310")
+    /// Get Python tag for wheel, e.g., cp310 or cp314.
     pub fn pythonTag(self: PythonConfig) [8]u8 {
         var buf: [8]u8 = undefined;
-        _ = std.fmt.bufPrint(&buf, "cp{d}{d}", .{ self.version_major, self.version_minor }) catch unreachable;
+        _ = std.fmt.bufPrint(&buf, "cp{d}{d}", .{
+            self.version_major,
+            self.version_minor,
+        }) catch unreachable;
+
         return buf;
     }
 };
@@ -83,13 +89,27 @@ pub fn detectPython(allocator: std.mem.Allocator) !PythonConfig {
         }
     } else |_| {}
 
+    // Detect free-threaded Python via Py_GIL_DISABLED (cross-platform).
+    // sys.abiflags is POSIX-only and returns "" on Windows even for free-threaded builds.
+    const r = runCommand(allocator, &.{
+        python_cmd,                                                                            "-c",
+        "import sysconfig; print('t' if sysconfig.get_config_var('Py_GIL_DISABLED') else '')",
+    });
+    var abiflags: []const u8 = undefined;
+    if (r) |abi_result| {
+        defer allocator.free(abi_result);
+        abiflags = try allocator.dupe(u8, std.mem.trim(u8, abi_result, &std.ascii.whitespace));
+    } else |_| {
+        abiflags = try allocator.dupe(u8, "");
+    }
+
     // Construct library name based on platform
     const lib_name = if (builtin.os.tag == .windows)
-        // Windows uses python<major><minor> (no dot), e.g., python313
-        try std.fmt.allocPrint(allocator, "python{d}{d}", .{ version_major, version_minor })
+        // Windows uses python<major><minor>[t] (no dot), e.g., python313 or python314t
+        try std.fmt.allocPrint(allocator, "python{d}{d}{s}", .{ version_major, version_minor, abiflags })
     else
-        // Unix uses python<major>.<minor>, e.g., python3.13
-        try std.fmt.allocPrint(allocator, "python{s}", .{version_str});
+        // Unix uses python<major>.<minor>[t], e.g., python3.13 or python3.14t
+        try std.fmt.allocPrint(allocator, "python{s}{s}", .{ version_str, abiflags });
 
     return PythonConfig{
         .version_major = version_major,
@@ -98,6 +118,7 @@ pub fn detectPython(allocator: std.mem.Allocator) !PythonConfig {
         .include_dir = include_dir,
         .lib_dir = lib_dir,
         .lib_name = lib_name,
+        .abiflags = abiflags,
     };
 }
 
@@ -184,20 +205,36 @@ pub fn buildModule(allocator: std.mem.Allocator, release: bool) !BuildResult {
             argv_len += 1;
         }
 
-        // On Windows, pass Python library info so zig build can link against python3.lib
+        // On Windows, pass Python library info so zig build can link correctly.
         // (Windows linker requires all symbols resolved at link time, unlike Unix)
         var lib_dir_arg: ?[]const u8 = null;
+        var lib_name_arg: ?[]const u8 = null;
         defer if (lib_dir_arg) |a| allocator.free(a);
+        defer if (lib_name_arg) |a| allocator.free(a);
         if (builtin.os.tag == .windows) {
             if (python.lib_dir) |lib_dir| {
-                lib_dir_arg = std.fmt.allocPrint(allocator, "-Dpython-lib-dir={s}", .{lib_dir}) catch null;
+                lib_dir_arg = std.fmt.allocPrint(
+                    allocator,
+                    "-Dpython-lib-dir={s}",
+                    .{lib_dir},
+                ) catch null;
                 if (lib_dir_arg) |arg| {
                     argv_buf[argv_len] = arg;
                     argv_len += 1;
                 }
             }
-            argv_buf[argv_len] = "-Dpython-lib-name=python3";
-            argv_len += 1;
+
+            // ABI3 links against stable python3.lib; non-ABI3 uses version-specific lib.
+            const win_lib_name: []const u8 = if (config.getAbi3()) "python3" else python.lib_name;
+            lib_name_arg = std.fmt.allocPrint(
+                allocator,
+                "-Dpython-lib-name={s}",
+                .{win_lib_name},
+            ) catch null;
+            if (lib_name_arg) |arg| {
+                argv_buf[argv_len] = arg;
+                argv_len += 1;
+            }
         }
 
         const argv: []const []const u8 = argv_buf[0..argv_len];

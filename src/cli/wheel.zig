@@ -49,22 +49,41 @@ pub fn buildWheel(allocator: std.mem.Allocator, release: bool, generate_stubs: b
     const platform_tag = try getPlatformTag(allocator, config.getLinuxPlatformTag());
     defer if (builtin.os.tag == .macos) allocator.free(platform_tag);
 
-    // For ABI3 wheels, use hardcoded Python 3.8 minimum
-    // Format: cp38-abi3-{platform}
-    // For non-ABI3, use current Python version: cpXY-cpXY-{platform}
+    // Python tag: cp38 (ABI3) or cpXY (non-ABI3)
     const python_tag = if (config.getAbi3())
-        "cp38" // ABI3 hardcoded to Python 3.8
+        try allocator.dupe(u8, "cp38")
     else
-        try std.fmt.allocPrint(allocator, "cp{d}{d}", .{ python.version_major, python.version_minor });
-    defer if (!config.getAbi3()) allocator.free(python_tag);
+        try std.fmt.allocPrint(
+            allocator,
+            "cp{d}{d}",
+            .{ python.version_major, python.version_minor },
+        );
+    defer allocator.free(python_tag);
 
-    // ABI tag: "abi3" for ABI3 mode, same as python_tag for non-ABI3
-    const abi_tag: []const u8 = if (config.getAbi3()) "abi3" else python_tag;
+    // ABI tag: abi3 (ABI3) or cpXY[t] (non-ABI3, t for free-threaded)
+    const abi_tag = if (config.getAbi3())
+        try allocator.dupe(u8, "abi3")
+    else
+        try std.fmt.allocPrint(
+            allocator,
+            "cp{d}{d}{s}",
+            .{ python.version_major, python.version_minor, python.abiflags },
+        );
+    defer allocator.free(abi_tag);
 
+    // PEP 427: wheel filenames use underscores, not hyphens.
+    const wheel_name = try config.getWheelName(allocator);
+    defer allocator.free(wheel_name);
     const wheel_filename = try std.fmt.allocPrint(
         allocator,
         "{s}-{s}-{s}-{s}-{s}.whl",
-        .{ config.name, config.getVersion(), python_tag, abi_tag, platform_tag },
+        .{
+            wheel_name,
+            config.getVersion(),
+            python_tag,
+            abi_tag,
+            platform_tag,
+        },
     );
     defer allocator.free(wheel_filename);
 
@@ -90,7 +109,16 @@ pub fn buildWheel(allocator: std.mem.Allocator, release: bool, generate_stubs: b
     }
 
     // Create the wheel (ZIP file)
-    try createWheelZip(allocator, wheel_path, &config, &python, build_result.module_path, build_result.module_name, stub_content);
+    try createWheelZip(
+        allocator,
+        wheel_path,
+        wheel_name,
+        &config,
+        &python,
+        build_result.module_path,
+        build_result.module_name,
+        stub_content,
+    );
 
     std.debug.print("\nWheel created: {s}\n", .{wheel_path});
     std.debug.print("\nTo install locally: pip install {s}\n", .{wheel_path});
@@ -103,6 +131,7 @@ pub fn buildWheel(allocator: std.mem.Allocator, release: bool, generate_stubs: b
 fn createWheelZip(
     allocator: std.mem.Allocator,
     wheel_path: []const u8,
+    wheel_name: []const u8,
     config: *const project.toml.PyProjectConfig,
     python: *const builder.PythonConfig,
     module_path: []const u8,
@@ -164,8 +193,12 @@ fn createWheelZip(
         try addPythonPackage(allocator, &z, cwd, pkg, &py_files, config);
     }
 
-    // Create dist-info directory name
-    const dist_info_name = try std.fmt.allocPrint(allocator, "{s}-{s}.dist-info", .{ config.name, config.getVersion() });
+    // Create dist-info directory name.
+    const dist_info_name = try std.fmt.allocPrint(
+        allocator,
+        "{s}-{s}.dist-info",
+        .{ wheel_name, config.getVersion() },
+    );
     defer allocator.free(dist_info_name);
 
     // Create WHEEL file content with appropriate tag based on ABI3 mode
@@ -181,15 +214,21 @@ fn createWheelZip(
             \\Tag: cp38-abi3-{s}
             \\
         , .{platform_tag})
-    else
-        // Non-ABI3 mode: use cpXY-cpXY tag format
+    else // Non-ABI3 mode: cpXY-cpXY[t]-{platform}
         try std.fmt.allocPrint(allocator,
             \\Wheel-Version: 1.0
             \\Generator: pyoz
             \\Root-Is-Purelib: false
-            \\Tag: cp{d}{d}-cp{d}{d}-{s}
+            \\Tag: cp{d}{d}-cp{d}{d}{s}-{s}
             \\
-        , .{ python.version_major, python.version_minor, python.version_major, python.version_minor, platform_tag });
+        , .{
+            python.version_major,
+            python.version_minor,
+            python.version_major,
+            python.version_minor,
+            python.abiflags,
+            platform_tag,
+        });
     defer allocator.free(wheel_content);
 
     const wheel_file_path = try std.fmt.allocPrint(allocator, "{s}/WHEEL", .{dist_info_name});
@@ -273,8 +312,8 @@ fn getPlatformTag(allocator: std.mem.Allocator, linux_platform_tag: []const u8) 
         .linux => if (linux_platform_tag.len > 0)
             linux_platform_tag
         else switch (builtin.cpu.arch) {
-            .x86_64 => "linux_x86_64",
-            .aarch64 => "linux_aarch64",
+            .x86_64 => "manylinux2014_x86_64",
+            .aarch64 => "manylinux2014_aarch64",
             else => "linux_unknown",
         },
         .macos => try getMacOSPlatformTag(allocator),
@@ -288,7 +327,10 @@ fn getPlatformTag(allocator: std.mem.Allocator, linux_platform_tag: []const u8) 
     };
 }
 
-/// Get macOS platform tag by detecting the actual OS version at runtime via Python
+/// Get macOS platform tag. Checks MACOSX_DEPLOYMENT_TARGET env var first,
+/// then falls back to per-arch defaults.
+/// sysconfig is not used because Python builds from pyenv/actions/setup-python
+/// often inherit the build host's OS version instead of a proper minimum target.
 fn getMacOSPlatformTag(allocator: std.mem.Allocator) ![]const u8 {
     const arch_str = switch (builtin.cpu.arch) {
         .x86_64 => "x86_64",
@@ -296,31 +338,49 @@ fn getMacOSPlatformTag(allocator: std.mem.Allocator) ![]const u8 {
         else => "unknown",
     };
 
-    // Get macOS version using Python's platform module
     const python_cmd = builder.getPythonCommand();
-    const result = builder.runCommand(allocator, &.{
-        python_cmd, "-c", "import platform; print(platform.mac_ver()[0])",
-    }) catch {
-        // Fallback to safe defaults if detection fails
-        return if (builtin.cpu.arch == .aarch64) "macosx_11_0_arm64" else "macosx_10_9_x86_64";
+    const result = builder.runCommand(
+        allocator,
+        &.{
+            python_cmd,
+            "-c",
+            "import os; print(os.environ.get('MACOSX_DEPLOYMENT_TARGET', ''))",
+        },
+    ) catch {
+        return switch (builtin.cpu.arch) {
+            .aarch64 => try std.fmt.allocPrint(allocator, "macosx_11_0_arm64", .{}),
+            else => try std.fmt.allocPrint(allocator, "macosx_10_13_x86_64", .{}),
+        };
     };
     defer allocator.free(result);
 
     const version_str = std.mem.trim(u8, result, &std.ascii.whitespace);
+    if (version_str.len == 0) {
+        // No env var set, so we use per-arch defaults.
+        return switch (builtin.cpu.arch) {
+            .aarch64 => try std.fmt.allocPrint(allocator, "macosx_11_0_arm64", .{}),
+            else => try std.fmt.allocPrint(allocator, "macosx_10_13_x86_64", .{}),
+        };
+    }
 
-    // Parse version (e.g., "14.5" or "13.2.1")
+    // Parse version, e.g., "14.0" or "10.13".
     var major: u32 = 10;
-    var minor: u32 = 9;
+    var minor: u32 = 13;
 
     var parts = std.mem.splitScalar(u8, version_str, '.');
     if (parts.next()) |major_str| {
         major = std.fmt.parseInt(u32, major_str, 10) catch 10;
     }
     if (parts.next()) |minor_str| {
-        minor = std.fmt.parseInt(u32, minor_str, 10) catch 9;
+        minor = std.fmt.parseInt(u32, minor_str, 10) catch 13;
     }
 
-    // Format: macosx_{major}_{minor}_{arch}
+    // ARM Macs require macOS 11.0+.
+    if (builtin.cpu.arch == .aarch64 and major < 11) {
+        major = 11;
+        minor = 0;
+    }
+
     return try std.fmt.allocPrint(allocator, "macosx_{d}_{d}_{s}", .{ major, minor, arch_str });
 }
 
